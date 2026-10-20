@@ -1,0 +1,45 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.models.test_case import TestCase
+from app.models.user import User, UserRole
+from app.schemas.test_case import TestCaseCreate, TestCaseResponse
+from app.services.dependencies import get_current_user, require_role
+
+router = APIRouter(prefix="/test-cases", tags=["test_cases"])
+
+
+@router.post("", response_model=TestCaseResponse, status_code=status.HTTP_201_CREATED)
+def create_test_case(
+    data: TestCaseCreate,
+    current_user: User = Depends(require_role(UserRole.teacher)),
+    db: Session = Depends(get_db),
+):
+    test_case = TestCase(**data.model_dump())
+    db.add(test_case)
+    db.commit()
+    db.refresh(test_case)
+    return test_case
+
+
+@router.get("/question/{question_id}", response_model=list[TestCaseResponse])
+def list_test_cases(
+    question_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return db.query(TestCase).filter(TestCase.question_id == question_id).all()
+
+
+@router.delete("/{test_case_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_test_case(
+    test_case_id: int,
+    current_user: User = Depends(require_role(UserRole.teacher)),
+    db: Session = Depends(get_db),
+):
+    test_case = db.get(TestCase, test_case_id)
+    if not test_case:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test case not found")
+    db.delete(test_case)
+    db.commit()
