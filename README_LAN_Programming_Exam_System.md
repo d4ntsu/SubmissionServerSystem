@@ -1,0 +1,512 @@
+# LAN Programming Exam and Auto-Grading System
+
+## 1. Project Overview
+
+Build a local-network (LAN) programming exam system that runs on a teacher's Windows PC. Students connect to the teacher's machine through a web browser on the same LAN. The system must be able to operate during an exam without requiring Internet access, once all required services, images, dependencies, and runtime environments have been prepared.
+
+The system provides:
+- Teacher and student accounts with role-based access.
+- Exam and question management.
+- Code submission through a browser.
+- Automated code execution and grading using a self-hosted Judge0 instance.
+- Persistent exam, submission, and result records in SQLite.
+- Real-time notifications and connection status using Socket Programming.
+- Java class/method grading with a Java test harness and Reflection.
+
+This README is the implementation guide for the coding agent. Treat the architecture and constraints below as project requirements unless the project owner explicitly changes them.
+
+## 2. Core Requirements
+
+### Functional requirements
+
+1. Teachers can create, edit, publish, start, and end exams.
+2. Teachers can create programming questions and configure supported languages and test cases.
+3. Students can log in, view available exams, open questions, and submit source code.
+4. The backend validates exam status, deadlines, student eligibility, and allowed languages before accepting submissions.
+5. Accepted submissions are persisted before grading begins.
+6. A background worker sends submissions to Judge0 and collects execution results.
+7. The system calculates scores, stores results, and displays them to students and teachers according to permissions.
+8. Real-time events inform students about exam announcements and submission/grading status.
+9. The system tracks connected students as online/offline on a best-effort basis.
+10. The application should be testable on a LAN with Internet access disconnected after setup.
+
+### Non-functional requirements
+
+- Keep the design understandable and maintainable for a student project.
+- Do not execute untrusted student code directly on the Windows host.
+- Keep hidden test cases and expected results on the server side.
+- Apply execution time, memory, output, and process limits through Judge0.
+- Handle multiple submissions without blocking HTTP request handlers.
+- Persist submissions before queuing work so a server restart does not silently lose accepted submissions.
+- Validate all requests on the backend; never trust frontend state for authorization or exam timing.
+- Document setup, startup, shutdown, LAN access, and offline verification.
+
+## 3. Recommended Technology Stack
+
+| Layer | Technology | Responsibility |
+|---|---|---|
+| Frontend | Next.js, TypeScript, Tailwind CSS | Teacher and student web interfaces |
+| Main backend | Python, FastAPI | API, authentication, validation, exam logic |
+| Database | SQLite, SQLAlchemy | Users, exams, questions, submissions, results |
+| Code execution | Self-hosted Judge0 | Compile and execute submitted code in a constrained environment |
+| Grading worker | Python background worker and durable database-backed job state | Process queued submissions and recover pending work |
+| Java method grader | Java, Reflection, test harness | Validate required class/method structure and invoke methods for test cases |
+| Realtime transport | Java TCP Socket server if Java Socket Programming must be demonstrated; browser bridge through FastAPI WebSocket | Real-time events and connection status |
+| Deployment | Docker Compose and Docker Desktop/WSL2 where supported | Run local services on the teacher's PC |
+
+### Important Socket Programming requirement
+
+The course requires Socket Programming. Make it a real feature, not an unused demonstration.
+
+Preferred design if the course specifically requires **Java Socket Programming**:
+- Implement a separate Java TCP server using `ServerSocket` and `Socket`.
+- Use it to manage persistent TCP client connections, parse messages, and broadcast or route real-time events.
+- Create clear classes such as `RealtimeServer`, `ClientHandler`, `Message`, and `ClientRegistry`.
+- The browser cannot directly use Java's `Socket` API. Use FastAPI WebSocket as a browser-facing bridge, and define a secure internal protocol between FastAPI and the Java TCP service.
+- Keep the Java TCP server bound to the local interface/network required for the deployment, and do not expose an unauthenticated control port to untrusted networks.
+- Define message framing. For example, use one JSON message per line, with a maximum message size and UTF-8 encoding. Do not assume one TCP read equals one complete message.
+- Authenticate clients or service-to-service connections. Validate message type, payload, sender, and destination.
+- Handle disconnects, exceptions, duplicate connections, and stale online-status entries.
+- Do not rely on Socket events as the authoritative source of exam state. FastAPI and the database remain authoritative.
+
+If the lecturer only requires Socket Programming in general and does not require Java, a Python TCP socket server is also possible. Confirm the course requirement before choosing the implementation. Do not add both Java and Python TCP servers without a clear reason.
+
+Use WebSocket only for communication with browser clients if appropriate. WebSocket and raw TCP sockets are different protocols; explain their roles clearly in project documentation.
+
+## 4. High-Level Architecture
+
+```text
+Student / Teacher Browser
+        |
+        | HTTP/HTTPS API + WebSocket
+        v
+Next.js Frontend <------> FastAPI Backend
+                             |
+              +--------------+----------------+
+              |              |                |
+              v              v                v
+           SQLite       Grading Queue     Realtime Bridge
+              |              |                |
+              |              v                v
+              |          Python Worker   Java TCP Socket Server
+              |              |                |
+              |              v                |
+              |            Judge0             |
+              |              |                |
+              +<-------------+----------------+
+                         Results
+```
+
+The exact realtime topology may be refined during implementation, but the responsibilities must remain separated:
+- HTTP APIs handle ordinary requests and commands.
+- Socket/WebSocket communication handles notifications and connection events.
+- SQLite stores durable application state.
+- The worker handles long-running grading tasks.
+- Judge0 executes untrusted code in its configured execution environment.
+
+## 5. Main User Flows
+
+### Student submission and grading
+
+1. Student logs in.
+2. Student opens an active exam.
+3. Frontend loads questions and allowed languages from FastAPI.
+4. Student submits source code.
+5. FastAPI checks identity, exam status, deadline, question, language, and submission limits.
+6. FastAPI saves the submission and its initial status in SQLite.
+7. A grading job becomes available to the worker.
+8. The worker prepares the Judge0 request and sends the code for execution.
+9. The worker collects compile/runtime/output results.
+10. The grading service calculates the score and persists the detailed result.
+11. A realtime event notifies the student that the submission status changed.
+12. The frontend fetches authorized result data from the API.
+
+### Teacher announcement
+
+1. Teacher writes an announcement in the teacher interface.
+2. FastAPI verifies the teacher's role and stores the announcement or associated audit event if needed.
+3. FastAPI sends an internal event to the realtime service.
+4. The Socket server routes/broadcasts the event to the intended connected students.
+5. FastAPI WebSocket forwards it to browser clients.
+6. The frontend displays the announcement.
+
+### Exam end
+
+The backend updates the exam status and enforces the deadline. A realtime event tells browsers to update their interfaces, but the backend must reject late submissions even if a browser is stale or modified.
+
+## 6. Project Structure
+
+Use this as a starting structure; adjust only when implementation needs justify it.
+
+```text
+programming-exam-system/
+├── frontend/
+│   ├── app/
+│   │   ├── login/
+│   │   ├── student/
+│   │   │   ├── exams/
+│   │   │   ├── questions/
+│   │   │   └── submissions/
+│   │   └── teacher/
+│   │       ├── exams/
+│   │       ├── questions/
+│   │       ├── submissions/
+│   │       └── results/
+│   ├── components/
+│   ├── lib/
+│   ├── types/
+│   └── package.json
+├── backend/
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── core/
+│   │   │   ├── config.py
+│   │   │   └── security.py
+│   │   ├── api/
+│   │   │   ├── auth.py
+│   │   │   ├── exams.py
+│   │   │   ├── questions.py
+│   │   │   ├── submissions.py
+│   │   │   └── results.py
+│   │   ├── models/
+│   │   ├── schemas/
+│   │   ├── repositories/
+│   │   ├── services/
+│   │   │   ├── exam_service.py
+│   │   │   ├── submission_service.py
+│   │   │   ├── grading_service.py
+│   │   │   ├── judge0_client.py
+│   │   │   └── java_method_grader.py
+│   │   ├── realtime/
+│   │   │   └── websocket.py
+│   │   ├── workers/
+│   │   │   └── grading_worker.py
+│   │   └── database.py
+│   ├── tests/
+│   └── requirements.txt
+├── java-socket-server/
+│   ├── src/main/java/com/exam/realtime/
+│   │   ├── RealtimeServer.java
+│   │   ├── ClientHandler.java
+│   │   ├── Message.java
+│   │   └── ClientRegistry.java
+│   ├── src/test/
+│   └── README.md
+├── java-grader/
+│   ├── src/main/java/
+│   │   └── ReflectionTestRunner.java
+│   ├── examples/
+│   └── README.md
+├── deploy/
+│   ├── judge0/
+│   ├── docker-compose.yml
+│   └── scripts/
+├── data/
+├── uploads/
+├── docs/
+├── .env.example
+├── .gitignore
+└── README.md
+```
+
+Do not commit passwords, API secrets, real student data, database files containing exam data, or generated submission contents.
+
+## 7. Database Design
+
+Use SQLAlchemy models and migrations or a documented schema initialization strategy. Recommended entities:
+
+### `users`
+- `id`
+- `username` or student/teacher identifier
+- `password_hash`
+- `role` (`TEACHER` or `STUDENT`)
+- `display_name`
+- `created_at`
+- `is_active`
+
+### `exams`
+- `id`
+- `title`
+- `description`
+- `start_at`
+- `end_at`
+- `status` (`DRAFT`, `PUBLISHED`, `ACTIVE`, `ENDED`)
+- `created_by`
+- `created_at`
+
+### `questions`
+- `id`
+- `title`
+- `description`
+- `points`
+- `question_type` (`STDIN_STDOUT` or `JAVA_CLASS_METHOD`)
+- `time_limit`
+- `memory_limit`
+- `class_name` (optional)
+- `method_name` (optional)
+- `method_mode` (optional: `STATIC` or `INSTANCE`)
+- `return_type` (optional)
+- `parameter_types` (optional structured data)
+
+### `exam_questions`
+- `exam_id`
+- `question_id`
+- `display_order`
+- Optional per-exam points or settings if the design needs them
+
+### `question_languages`
+- `question_id`
+- `language_id` or language identifier
+- `is_allowed`
+
+### `test_cases`
+- `id`
+- `question_id`
+- `is_sample`
+- `weight`
+- `stdin` (for stdin/stdout questions)
+- `expected_stdout` (for stdin/stdout questions)
+- Structured argument values and expected return value for Java method questions
+- Never return hidden test data to the student-facing API.
+
+### `exam_participants`
+- `exam_id`
+- `student_id`
+- `joined_at`
+- Optional eligibility or attempt settings
+
+### `submissions`
+- `id`
+- `exam_id`
+- `question_id`
+- `student_id`
+- `language_id`
+- `source_code` or a protected source reference
+- `status` (`QUEUED`, `RUNNING`, `COMPLETED`, `FAILED`)
+- `submitted_at`
+- `graded_at`
+- `score`
+- `max_score`
+- `error_summary`
+
+### `submission_results`
+- `id`
+- `submission_id`
+- `test_case_id` (avoid exposing hidden test identifiers unnecessarily)
+- `status`
+- `execution_time`
+- `memory_used`
+- `stdout` and `stderr` subject to safe size limits
+- `points_awarded`
+- Internal details needed for audit/debugging
+
+Optional tables may include `announcements`, `audit_logs`, and `grading_jobs`. Avoid overengineering the schema before the MVP works.
+
+## 8. Java Class/Method Grading with Reflection
+
+The system needs to support at least two question types:
+
+### Type A: Standard input/output
+The student writes a program that reads input and prints output. The grader runs it against test cases and compares normalized output according to a documented policy.
+
+### Type B: Java class/method
+The question specifies a required class and method. For example, a question may require a `Calculator` class with an `add(int, int)` method.
+
+The Java grading flow should:
+1. Keep the required class name, method name, parameter types, return type, and invocation mode in server-side question configuration.
+2. Build a test harness that loads/compiles the student's submission and checks the class/method using Java Reflection.
+3. Verify that the method signature is compatible with the question.
+4. Invoke the method with server-defined test arguments.
+5. Compare returned values with expected results.
+6. Produce a structured grading result for the Python backend.
+
+Important implementation details:
+- Reflection is not a security sandbox. Student code must still run inside Judge0 or another appropriately isolated environment.
+- Do not expose hidden expected values or hidden tests in files or source code accessible to students.
+- Avoid brittle string parsing of Java source as the primary method of checking class structure.
+- Define behavior for overloaded methods, packages, constructors, static versus instance methods, exceptions, and supported data types.
+- Confirm how Judge0 accepts multiple files and custom harness files before implementing the final request format.
+- Do not assume that a hidden test remains secret if it is embedded in a file visible to the submitted program or student. Treat all student-executable test data as potentially observable.
+
+## 9. Realtime Message Protocol
+
+Document the protocol shared by FastAPI, the Java Socket server, and the browser-facing WebSocket bridge.
+
+A message should have a predictable envelope, for example:
+
+```json
+{
+  "type": "submission.status",
+  "request_id": "unique-id",
+  "sender": "backend",
+  "recipient": "student:123",
+  "timestamp": "ISO-8601 timestamp",
+  "payload": {
+    "submission_id": 456,
+    "status": "RUNNING"
+  }
+}
+```
+
+This is an example schema, not a fixed final contract. Define and validate the actual schema before implementing both ends.
+
+Suggested event types:
+- `client.hello`
+- `client.heartbeat`
+- `client.status`
+- `exam.started`
+- `exam.ended`
+- `exam.announcement`
+- `submission.received`
+- `submission.status`
+- `submission.completed`
+- `server.error`
+
+Protocol rules:
+- Specify whether messages are newline-delimited JSON or use length-prefixed framing.
+- Enforce maximum message sizes.
+- Use UTF-8 consistently.
+- Validate every event and payload.
+- Use server-side authorization to decide which clients can receive each event.
+- Do not broadcast student source code, hidden tests, credentials, or private result data.
+- Make reconnection and heartbeat behavior explicit.
+- Treat online status as approximate; a disconnected browser may take time to be detected.
+- Do not let clients set authoritative exam status, grades, roles, or another user's identity.
+
+## 10. Judge0 and Offline Operation
+
+Before building all features, verify that Judge0 runs locally on the target Windows machine.
+
+- Check Docker Desktop and WSL2 requirements for the target Windows environment.
+- Pull and prepare all required container images while Internet is available.
+- Verify that Java and every other required language are supported by the selected Judge0 configuration.
+- Keep the required runtime images and dependencies available locally.
+- Configure execution limits for CPU/time, memory, process count, output size, and other supported resources.
+- Restrict network access for untrusted submissions where the deployment allows it.
+- Test a complete exam flow after disconnecting the PC from the Internet.
+- Document which services must be running and how to start/stop them.
+- Do not assume that “self-hosted” automatically means “works offline”; test offline operation explicitly.
+
+Official references:
+- Judge0 self-hosting: https://docs.judge0.com/products/judge0/get_started/self_hosting/
+- Judge0 repository: https://github.com/judge0/judge0
+- Docker Desktop WSL 2: https://docs.docker.com/desktop/features/wsl/
+- Docker Desktop installation on Windows: https://docs.docker.com/desktop/setup/install/windows-install/
+
+## 11. Security and Reliability
+
+- Hash passwords using a suitable password-hashing algorithm; never store plaintext passwords.
+- Enforce role-based authorization in FastAPI.
+- Validate exam windows and submission permissions on the server.
+- Apply request size limits and safe error responses.
+- Store uploads and source files safely; do not trust filenames or file extensions.
+- Never run untrusted submissions directly on the Windows host.
+- Configure and verify Judge0's isolation and resource limits; a sandbox reduces risk but is not a guarantee of complete security.
+- Keep hidden test cases and expected outputs server-side as far as the execution model permits.
+- Limit stdout/stderr capture and stored logs to avoid resource exhaustion.
+- Use a durable job state in the database. On startup, recover eligible `QUEUED` jobs and handle jobs left in `RUNNING` according to a documented retry policy.
+- Make grading retries idempotent so the same submission is not accidentally awarded duplicate points.
+- Handle duplicate submissions, client disconnects, timeouts, Judge0 failures, and service restarts.
+- Add audit logs for important teacher actions if time permits.
+- Restrict internal Socket service access and authenticate service-to-service messages.
+- Keep secrets and configuration in environment variables or local configuration files excluded from version control.
+
+## 12. Implementation Plan
+
+Build incrementally. Do not attempt all advanced features at once.
+
+### Phase 1 — Environment validation
+- Verify Windows, Docker Desktop, and WSL2 compatibility.
+- Run Judge0 locally and test a small Java program.
+- Confirm that the selected languages work with Internet disconnected after setup.
+- Create the repository and environment configuration.
+
+### Phase 2 — Backend foundation
+- Create FastAPI application and SQLite/SQLAlchemy setup.
+- Implement user models, authentication, and role checks.
+- Implement exam and question CRUD APIs.
+- Add schema validation and backend tests.
+
+### Phase 3 — Basic submission and grading
+- Implement student exam pages and code submission.
+- Persist submissions before grading.
+- Add a recoverable background worker.
+- Integrate Judge0 for standard input/output questions.
+- Store test-level results and calculate scores.
+
+### Phase 4 — Frontend completion
+- Implement teacher exam/question management and result views.
+- Implement student exam, editor/submission, and result views.
+- Show loading, errors, submission state, and exam deadlines clearly.
+
+### Phase 5 — Socket Programming
+- Confirm whether the course requires Java Socket specifically.
+- Define the message protocol first.
+- Implement the Java TCP server if required.
+- Integrate FastAPI with the realtime service.
+- Add teacher announcements, exam lifecycle events, online/offline status, and submission-status notifications.
+- Test multiple concurrent clients, disconnections, reconnects, malformed messages, and unauthorized event attempts.
+
+### Phase 6 — Java Reflection grading
+- Implement and test the Java harness separately with sample classes.
+- Integrate class/method questions with Judge0.
+- Test signature mismatch, overloaded methods, exceptions, invalid return values, and multiple test cases.
+- Verify hidden-test handling and multi-file compilation behavior.
+
+### Phase 7 — Deployment and final testing
+- Add startup/shutdown scripts and deployment documentation.
+- Test teacher and student devices on the same LAN.
+- Test a disconnected Internet environment.
+- Test server restart and queued-job recovery.
+- Test concurrent submissions and failure cases.
+- Review security and remove sample credentials/data.
+
+A short academic deadline may require moving Java class/method grading or other advanced features to a later phase. Prioritize a stable end-to-end MVP.
+
+## 13. Definition of Done
+
+The MVP is complete when:
+- A teacher can create and run an exam.
+- A student can connect over the LAN and submit code.
+- The backend rejects submissions outside the permitted exam window.
+- A standard input/output Java submission is graded through Judge0.
+- Results are saved and visible to authorized users.
+- The Socket Programming module demonstrates real two-way communication and at least one useful realtime feature.
+- The system can handle multiple connected students without blocking the API.
+- The application can be started and tested with Internet disconnected after preparation.
+- A server restart does not silently discard persisted submissions or queued grading work.
+- Setup, architecture, message protocol, known limitations, and test steps are documented.
+
+## 14. Agent Instructions
+
+When implementing this project:
+
+1. Inspect the existing repository before changing files. Reuse working code where sensible; do not overwrite project files blindly.
+2. Start by writing a short implementation plan and identifying environment assumptions.
+3. Implement in small, testable phases. Run relevant tests after each phase.
+4. Prefer straightforward code and explicit types over unnecessary abstractions.
+5. Keep frontend API calls, backend business logic, database access, realtime transport, and grading execution separated.
+6. Do not put all logic in a single file or execute grading inside the HTTP request handler.
+7. Do not fabricate successful test results. Report commands run, results observed, and any tests not run.
+8. If a required environment detail is missing, inspect available files and configuration first. Ask only when the uncertainty blocks safe or correct implementation.
+9. Do not add technologies or services without a concrete requirement.
+10. Keep README and configuration examples updated as implementation decisions become final.
+11. Never expose secrets, hidden test cases, or private student data in frontend responses or logs.
+12. Do not assume that a Socket server is integrated merely because its code exists; demonstrate a working end-to-end event from the teacher interface to a student browser.
+13. If an existing `submission_server.py` or similar prototype is present, inspect it before deciding what to reuse. Migrate its useful file-listing or upload behavior into the main FastAPI application if appropriate; do not retain a second production server without a clear purpose.
+14. Before declaring the project complete, provide a summary of implemented features, architecture decisions, startup instructions, test evidence, and remaining limitations.
+
+## 15. Initial Tasks for the Agent
+
+Begin with these tasks in order:
+
+1. Inspect the repository and report the existing structure and working components.
+2. Verify the local development environment and the availability of Docker/Judge0 if possible.
+3. Propose a phased implementation plan based on the actual repository rather than assuming it is empty.
+4. Implement the smallest end-to-end slice: login or development authentication, one exam/question, student submission, Judge0 execution, and persisted result.
+5. Add automated tests for backend validation and grading-result handling.
+6. Implement the realtime protocol and Socket feature once the main API flow is clear.
+7. Add Java Reflection grading and deployment/offline checks.
+8. Update documentation to match the actual implemented behavior.
+
+Do not claim that offline execution, sandboxing, or realtime delivery is verified until it has actually been tested.
