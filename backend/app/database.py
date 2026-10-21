@@ -3,7 +3,7 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-from app.config import settings
+from app.core.config import settings
 
 os.makedirs(os.path.dirname(settings.database_url.replace("sqlite:///", "")), exist_ok=True)
 

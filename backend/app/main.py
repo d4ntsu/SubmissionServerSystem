@@ -1,10 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import settings
+from app.core.config import settings
 from app.database import Base, engine
 from app.models import *  # noqa: F401,F403 - register all models for metadata
-from app.routers import auth, exams, questions, test_cases
+from app.api import auth, exams, questions, test_cases
 
 Base.metadata.create_all(bind=engine)
 

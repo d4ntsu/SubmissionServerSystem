@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.user import User, UserRole
-from app.services.auth import decode_access_token
+from app.core.security import decode_access_token
 
 security = HTTPBearer()
 
