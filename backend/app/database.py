@@ -1,16 +1,35 @@
 import os
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.core.config import settings
 
-os.makedirs(os.path.dirname(settings.database_url.replace("sqlite:///", "")), exist_ok=True)
+db_path = settings.database_url.replace("sqlite:///", "")
+os.makedirs(os.path.dirname(db_path), exist_ok=True)
+
+# Enable WAL mode for concurrent access with Java JDBC reader
+wal_url = settings.database_url
+if "sqlite" in wal_url:
+    if "?" in wal_url:
+        wal_url += "&journal_mode=WAL"
+    else:
+        wal_url += "?journal_mode=WAL"
 
 engine = create_engine(
-    settings.database_url,
+    wal_url,
     connect_args={"check_same_thread": False} if "sqlite" in settings.database_url else {},
 )
+
+
+@event.listens_for(engine, "connect")
+def _set_sqlite_pragmas(dbapi_connection, connection_record):
+    """Enable WAL mode on every connection (belt-and-suspenders with the URL param)."""
+    if "sqlite" in settings.database_url:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

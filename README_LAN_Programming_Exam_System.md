@@ -160,50 +160,82 @@ programming-exam-system/
 │   ├── app/
 │   │   ├── main.py
 │   │   ├── core/
+│   │   │   ├── __init__.py
 │   │   │   ├── config.py
 │   │   │   └── security.py
 │   │   ├── api/
+│   │   │   ├── __init__.py
 │   │   │   ├── auth.py
 │   │   │   ├── exams.py
 │   │   │   ├── questions.py
-│   │   │   ├── submissions.py
-│   │   │   └── results.py
+│   │   │   ├── test_cases.py
+│   │   │   ├── submissions.py          (Phase 3)
+│   │   │   └── results.py              (Phase 3)
 │   │   ├── models/
+│   │   │   ├── __init__.py
+│   │   │   ├── user.py
+│   │   │   ├── exam.py
+│   │   │   ├── question.py
+│   │   │   ├── test_case.py
+│   │   │   └── submission.py
 │   │   ├── schemas/
-│   │   ├── repositories/
+│   │   │   ├── __init__.py
+│   │   │   ├── user.py
+│   │   │   ├── token.py
+│   │   │   ├── exam.py
+│   │   │   ├── question.py
+│   │   │   ├── test_case.py
+│   │   │   └── submission.py
+│   │   ├── repositories/               (Phase 3)
 │   │   ├── services/
-│   │   │   ├── exam_service.py
-│   │   │   ├── submission_service.py
-│   │   │   ├── grading_service.py
-│   │   │   ├── judge0_client.py
-│   │   │   └── java_method_grader.py
+│   │   │   ├── __init__.py
+│   │   │   ├── auth.py
+│   │   │   ├── dependencies.py
+│   │   │   ├── exam_service.py         (Phase 3)
+│   │   │   ├── submission_service.py   (Phase 3)
+│   │   │   ├── grading_service.py      (Phase 3)
+│   │   │   ├── judge0_client.py        (Phase 3)
+│   │   │   └── java_method_grader.py   (Phase 6)
 │   │   ├── realtime/
-│   │   │   └── websocket.py
+│   │   │   └── websocket.py            (Phase 5)
 │   │   ├── workers/
-│   │   │   └── grading_worker.py
+│   │   │   └── grading_worker.py       (Phase 3)
 │   │   └── database.py
+│   ├── data/                            (SQLite DB — gitignored)
 │   ├── tests/
+│   │   ├── __init__.py
+│   │   ├── conftest.py
+│   │   └── test_api.py
 │   └── requirements.txt
 ├── java-socket-server/
-│   ├── src/main/java/com/exam/realtime/
-│   │   ├── RealtimeServer.java
-│   │   ├── ClientHandler.java
-│   │   ├── Message.java
-│   │   └── ClientRegistry.java
-│   ├── src/test/
-│   └── README.md
-├── java-grader/
+│   ├── pom.xml
+│   ├── README.md
+│   ├── src/
+│   │   ├── main/
+│   │   │   ├── java/com/exam/realtime/
+│   │   │   │   ├── RealtimeServer.java
+│   │   │   │   ├── ClientHandler.java
+│   │   │   │   ├── ClientRegistry.java
+│   │   │   │   ├── Message.java
+│   │   │   │   ├── Config.java
+│   │   │   │   └── DatabaseConnection.java
+│   │   │   └── resources/
+│   │   │       └── server.properties
+│   │   └── test/java/com/exam/realtime/
+│   │       ├── DatabaseConnectionTest.java
+│   │       ├── MessageTest.java
+│   │       └── ClientRegistryTest.java
+│   └── target/                          (build output — gitignored)
+├── java-grader/                         (Phase 6)
 │   ├── src/main/java/
 │   │   └── ReflectionTestRunner.java
 │   ├── examples/
 │   └── README.md
 ├── deploy/
 │   ├── judge0/
-│   ├── docker-compose.yml
+│   │   ├── docker-compose.yml
+│   │   └── judge0.conf
 │   └── scripts/
-├── data/
-├── uploads/
-├── docs/
 ├── .env.example
 ├── .gitignore
 └── README.md

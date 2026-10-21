@@ -22,6 +22,7 @@ class UserResponse(BaseModel):
     username: str
     full_name: str
     role: UserRole
+    is_online: int = 0
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
