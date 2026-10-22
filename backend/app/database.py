@@ -8,16 +8,8 @@ from app.core.config import settings
 db_path = settings.database_url.replace("sqlite:///", "")
 os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
-# Enable WAL mode for concurrent access with Java JDBC reader
-wal_url = settings.database_url
-if "sqlite" in wal_url:
-    if "?" in wal_url:
-        wal_url += "&journal_mode=WAL"
-    else:
-        wal_url += "?journal_mode=WAL"
-
 engine = create_engine(
-    wal_url,
+    settings.database_url,
     connect_args={"check_same_thread": False} if "sqlite" in settings.database_url else {},
 )
 

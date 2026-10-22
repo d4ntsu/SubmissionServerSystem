@@ -6,6 +6,7 @@ dist/
 build/
 .venv/
 venv/
+.venv311/
 
 # Node / Next.js
 node_modules/
