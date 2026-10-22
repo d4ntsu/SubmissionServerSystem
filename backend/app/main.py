@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.database import Base, engine
 from app.models import *  # noqa: F401,F403 - register all models for metadata
 from app.api import auth, exams, questions, test_cases, submissions, results
+from app.realtime import RealtimeBridge
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -14,6 +15,12 @@ logger = logging.getLogger(__name__)
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="LAN Programming Exam System", version="0.1.0")
+realtime_bridge = RealtimeBridge(
+    settings.socket_server_host,
+    settings.socket_server_port,
+    settings.socket_server_shared_secret,
+)
+app.state.realtime_bridge = realtime_bridge
 
 origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
 app.add_middleware(
@@ -33,6 +40,16 @@ app.include_router(results.router)
 
 _worker_stop_event: asyncio.Event | None = None
 _worker_task: asyncio.Task | None = None
+
+
+@app.on_event("startup")
+async def start_realtime_bridge():
+    await realtime_bridge.start()
+
+
+@app.on_event("shutdown")
+async def stop_realtime_bridge():
+    await realtime_bridge.stop()
 
 
 @app.on_event("startup")

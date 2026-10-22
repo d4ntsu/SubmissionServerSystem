@@ -26,6 +26,7 @@ public final class Config {
         override("server.port", "SOCKET_PORT");
         override("database.path", "DATABASE_PATH");
         override("auth.shared_secret", "SHARED_SECRET");
+        override("auth.shared_secret", "SOCKET_SERVER_SHARED_SECRET");
     }
 
     private static void override(String key, String envVar) {
@@ -50,6 +51,6 @@ public final class Config {
     }
 
     public static String getSharedSecret() {
-        return props.getProperty("auth.shared_secret", "dev-secret-change-in-production");
+        return props.getProperty("auth.shared_secret", "").trim();
     }
 }

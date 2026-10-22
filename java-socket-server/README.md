@@ -46,7 +46,9 @@ Edit `src/main/resources/server.properties` or set environment variables:
 | `server.host` | `SOCKET_HOST` | `127.0.0.1` | Bind address |
 | `server.port` | `SOCKET_PORT` | `9000` | TCP port |
 | `database.path` | `DATABASE_PATH` | `../backend/app/data/exam_system.db` | SQLite DB path |
-| `auth.shared_secret` | `SHARED_SECRET` | `dev-secret-change-in-production` | Shared auth secret |
+| `auth.shared_secret` | `SOCKET_SERVER_SHARED_SECRET` or `SHARED_SECRET` | empty | Shared secret for FastAPI service authentication; set the same value in the backend `.env` and Java server environment |
+
+The FastAPI bridge remains disabled until `SOCKET_SERVER_SHARED_SECRET` is configured. The Java server rejects `service.hello` if its secret is empty. Keep both services on a trusted internal network; the TCP connection does not add TLS.
 
 ## Message Protocol
 
@@ -54,9 +56,12 @@ Newline-delimited JSON over TCP. See [Message.java](src/main/java/com/exam/realt
 
 ### Client → Server
 ```
+{"type":"service.hello","sender":"fastapi","recipient":"server","payload":{"shared_secret":"<configured secret>"}}
 {"type":"client.hello","requestId":"...","sender":"...","payload":{"user_id":42}}
 {"type":"client.heartbeat","requestId":"...","sender":"..."}
 ```
+
+After the service handshake succeeds, FastAPI sends newline-delimited normalized event envelopes. Java routes them by `recipient` (for example `broadcast`, `student:<id>`, or `role:<name>`). Routed messages received by the service connection are dispatched to FastAPI's `RealtimeEventRouter`.
 
 ### Server → Client
 ```

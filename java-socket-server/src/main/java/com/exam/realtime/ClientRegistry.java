@@ -8,12 +8,16 @@ import java.sql.Statement;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Tracks connected clients and validates users against the SQLite database via JDBC.
  * Maintains an approximate online-status using JDBC writes to the users table.
  */
 public final class ClientRegistry {
+
+    private static final Logger LOGGER = Logger.getLogger(ClientRegistry.class.getName());
 
     /** Maps clientId → ClientHandler for active TCP connections */
     private final Map<String, ClientHandler> onlineClients = new ConcurrentHashMap<>();
@@ -46,7 +50,7 @@ public final class ClientRegistry {
                 }
             }
         } catch (SQLException e) {
-            System.err.println("[ClientRegistry] User lookup failed: " + e.getMessage());
+            LOGGER.log(Level.WARNING, "User lookup failed: {0}", e.getClass().getSimpleName());
         }
         return Optional.empty();
     }
@@ -70,7 +74,7 @@ public final class ClientRegistry {
                 }
             }
         } catch (SQLException e) {
-            System.err.println("[ClientRegistry] User lookup failed: " + e.getMessage());
+            LOGGER.log(Level.WARNING, "User lookup failed: {0}", e.getClass().getSimpleName());
         }
         return Optional.empty();
     }
@@ -88,7 +92,7 @@ public final class ClientRegistry {
                 return rs.next();
             }
         } catch (SQLException e) {
-            System.err.println("[ClientRegistry] Role check failed: " + e.getMessage());
+            LOGGER.log(Level.WARNING, "Role lookup failed: {0}", e.getClass().getSimpleName());
         }
         return false;
     }
@@ -106,7 +110,7 @@ public final class ClientRegistry {
                 ids.add(rs.getInt("id"));
             }
         } catch (SQLException e) {
-            System.err.println("[ClientRegistry] Student list query failed: " + e.getMessage());
+            LOGGER.log(Level.WARNING, "Student list lookup failed: {0}", e.getClass().getSimpleName());
         }
         return ids;
     }
@@ -144,18 +148,51 @@ public final class ClientRegistry {
         onlineClients.put(clientId, handler);
     }
 
-    public void associateUser(String clientId, int userId) {
+    public synchronized void associateUser(String clientId, int userId) {
+        Integer previousUserId = clientToUser.put(clientId, userId);
+        if (previousUserId != null && previousUserId != userId) {
+            removeUserMapping(previousUserId, clientId);
+        }
         userToClient.put(userId, clientId);
-        clientToUser.put(clientId, userId);
         markOnline(userId);
     }
 
-    public void removeClient(String clientId) {
+    public synchronized void unregisterClient(String clientId) {
         onlineClients.remove(clientId);
         Integer userId = clientToUser.remove(clientId);
-        if (userId != null) {
-            userToClient.remove(userId);
-            markOffline(userId);
+        if (userId != null && userToClient.remove(userId, clientId)) {
+            String replacementClientId = clientToUser.entrySet().stream()
+                    .filter(entry -> entry.getValue().equals(userId)
+                            && onlineClients.containsKey(entry.getKey()))
+                    .map(Map.Entry::getKey)
+                    .findFirst()
+                    .orElse(null);
+            if (replacementClientId != null) {
+                userToClient.put(userId, replacementClientId);
+            } else {
+                markOffline(userId);
+            }
+        }
+    }
+
+    /** Backwards-compatible alias for existing callers. */
+    public void removeClient(String clientId) {
+        unregisterClient(clientId);
+    }
+
+    private void removeUserMapping(int userId, String clientId) {
+        if (userToClient.remove(userId, clientId)) {
+            String replacementClientId = clientToUser.entrySet().stream()
+                    .filter(entry -> entry.getValue().equals(userId)
+                            && onlineClients.containsKey(entry.getKey()))
+                    .map(Map.Entry::getKey)
+                    .findFirst()
+                    .orElse(null);
+            if (replacementClientId != null) {
+                userToClient.put(userId, replacementClientId);
+            } else {
+                markOffline(userId);
+            }
         }
     }
 
@@ -168,6 +205,47 @@ public final class ClientRegistry {
         return onlineClients.get(clientId);
     }
 
+    public ClientHandler getClient(String clientId) {
+        return onlineClients.get(clientId);
+    }
+
+    /** Returns a stable snapshot so callers cannot mutate the live registry. */
+    public Map<String, ClientHandler> getAllClients() {
+        return Map.copyOf(onlineClients);
+    }
+
+    /** Backwards-compatible accessor, now returning a snapshot. */
+    public Map<String, ClientHandler> getOnlineClients() {
+        return getAllClients();
+    }
+
+    public void sendTo(String clientId, Message message) {
+        ClientHandler handler = onlineClients.get(clientId);
+        if (handler != null) {
+            handler.sendMessage(message);
+        }
+    }
+
+    public void sendToUser(int userId, Message message) {
+        ClientHandler handler = getHandlerByUserId(userId);
+        if (handler != null) {
+            handler.sendMessage(message);
+        }
+    }
+
+    public void broadcast(Message message) {
+        for (ClientHandler handler : getAllClients().values()) {
+            handler.sendMessage(message);
+        }
+    }
+
+    /** Closes and unregisters every current connection. */
+    public void closeAllClients() {
+        for (ClientHandler handler : getAllClients().values()) {
+            handler.onDisconnect();
+        }
+    }
+
     public int onlineCount() {
         return onlineClients.size();
     }
@@ -176,12 +254,7 @@ public final class ClientRegistry {
         return userToClient.containsKey(userId);
     }
 
-        /** Returns all currently-connected client handlers (for broadcasting / iteration). */
-        public Map<String, ClientHandler> getOnlineClients() {
-            return onlineClients;
-        }
-
-        // --- Data class ---
+    // --- Data class ---
 
     public record UserInfo(int id, String username, String fullName, String role) {}
 }

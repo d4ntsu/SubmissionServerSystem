@@ -20,7 +20,8 @@ public class Message {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     public enum Type {
-        // Client → Server
+        // Internal service handshake and client-to-server messages
+        SERVICE_HELLO("service.hello"),
         CLIENT_HELLO("client.hello"),
         CLIENT_HEARTBEAT("client.heartbeat"),
         CLIENT_STATUS("client.status"),
@@ -30,8 +31,10 @@ public class Message {
         EXAM_ENDED("exam.ended"),
         EXAM_ANNOUNCEMENT("exam.announcement"),
         SUBMISSION_RECEIVED("submission.received"),
+        SUBMISSION_RUNNING("submission.running"),
         SUBMISSION_STATUS("submission.status"),
         SUBMISSION_COMPLETED("submission.completed"),
+        SUBMISSION_FAILED("submission.failed"),
         SERVER_ERROR("server.error");
 
         private final String value;
