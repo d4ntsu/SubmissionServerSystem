@@ -42,8 +42,8 @@ uploads/
 .DS_Store
 Thumbs.db
 
-# Docker
-deploy/judge0/judge0.conf
+# Local execution service runtime packages
+deploy/piston/data/
 
 # Logs
 *.log

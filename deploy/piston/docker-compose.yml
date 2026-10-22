@@ -6,6 +6,14 @@ services:
     privileged: true
     ports:
       - "127.0.0.1:2000:2000"
+    environment:
+      PISTON_DISABLE_NETWORKING: "true"
+      PISTON_MAX_PROCESS_COUNT: "32"
+      PISTON_OUTPUT_MAX_SIZE: "1024"
+      PISTON_COMPILE_TIMEOUT: "10000"
+      PISTON_RUN_TIMEOUT: "3000"
+      PISTON_COMPILE_MEMORY_LIMIT: "536870912"
+      PISTON_RUN_MEMORY_LIMIT: "268435456"
     volumes:
       - ./data/piston/packages:/piston/packages
     tmpfs:

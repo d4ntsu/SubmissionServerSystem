@@ -14,7 +14,6 @@ class SubmissionResponse(BaseModel):
     status: SubmissionStatus
     score: float | None = None
     max_score: float
-    judge0_submission_id: str | None = None
     submitted_at: datetime | None = None
     graded_at: datetime | None = None
 

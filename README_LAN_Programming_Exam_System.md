@@ -8,7 +8,7 @@ The system provides:
 - Teacher and student accounts with role-based access.
 - Exam and question management.
 - Code submission through a browser.
-- Automated code execution and grading using a self-hosted Judge0 instance.
+- Automated code execution and grading using a self-hosted Piston instance.
 - Persistent exam, submission, and result records in SQLite.
 - Real-time notifications and connection status using Socket Programming.
 - Java class/method grading with a Java test harness and Reflection.
@@ -24,7 +24,7 @@ This README is the implementation guide for the coding agent. Treat the architec
 3. Students can log in, view available exams, open questions, and submit source code.
 4. The backend validates exam status, deadlines, student eligibility, and allowed languages before accepting submissions.
 5. Accepted submissions are persisted before grading begins.
-6. A background worker sends submissions to Judge0 and collects execution results.
+6. A background worker sends submissions to Piston and collects execution results.
 7. The system calculates scores, stores results, and displays them to students and teachers according to permissions.
 8. Real-time events inform students about exam announcements and submission/grading status.
 9. The system tracks connected students as online/offline on a best-effort basis.
@@ -35,7 +35,7 @@ This README is the implementation guide for the coding agent. Treat the architec
 - Keep the design understandable and maintainable for a student project.
 - Do not execute untrusted student code directly on the Windows host.
 - Keep hidden test cases and expected results on the server side.
-- Apply execution time, memory, output, and process limits through Judge0.
+- Apply execution time, memory, output, and process limits through Piston.
 - Handle multiple submissions without blocking HTTP request handlers.
 - Persist submissions before queuing work so a server restart does not silently lose accepted submissions.
 - Validate all requests on the backend; never trust frontend state for authorization or exam timing.
@@ -48,7 +48,7 @@ This README is the implementation guide for the coding agent. Treat the architec
 | Frontend | Next.js, TypeScript, Tailwind CSS | Teacher and student web interfaces |
 | Main backend | Python, FastAPI | API, authentication, validation, exam logic |
 | Database | SQLite, SQLAlchemy | Users, exams, questions, submissions, results |
-| Code execution | Self-hosted Judge0 | Compile and execute submitted code in a constrained environment |
+| Code execution | Self-hosted Piston | Compile and execute submitted code in an isolated runner |
 | Grading worker | Python background worker and durable database-backed job state | Process queued submissions and recover pending work |
 | Java method grader | Java, Reflection, test harness | Validate required class/method structure and invoke methods for test cases |
 | Realtime transport | Java TCP Socket server if Java Socket Programming must be demonstrated; browser bridge through FastAPI WebSocket | Real-time events and connection status |
@@ -91,7 +91,7 @@ Next.js Frontend <------> FastAPI Backend
               |          Python Worker   Java TCP Socket Server
               |              |                |
               |              v                |
-              |            Judge0             |
+              |             Piston            |
               |              |                |
               +<-------------+----------------+
                          Results
@@ -102,7 +102,7 @@ The exact realtime topology may be refined during implementation, but the respon
 - Socket/WebSocket communication handles notifications and connection events.
 - SQLite stores durable application state.
 - The worker handles long-running grading tasks.
-- Judge0 executes untrusted code in its configured execution environment.
+- Piston executes code in its configured isolated runner.
 
 ## 5. Main User Flows
 
@@ -115,7 +115,7 @@ The exact realtime topology may be refined during implementation, but the respon
 5. FastAPI checks identity, exam status, deadline, question, language, and submission limits.
 6. FastAPI saves the submission and its initial status in SQLite.
 7. A grading job becomes available to the worker.
-8. The worker prepares the Judge0 request and sends the code for execution.
+8. The worker prepares a Piston request and sends the code for execution.
 9. The worker collects compile/runtime/output results.
 10. The grading service calculates the score and persists the detailed result.
 11. A realtime event notifies the student that the submission status changed.
@@ -194,7 +194,7 @@ programming-exam-system/
 │   │   │   ├── exam_service.py         (Phase 3)
 │   │   │   ├── submission_service.py   (Phase 3)
 │   │   │   ├── grading_service.py      (Phase 3)
-│   │   │   ├── judge0_client.py        (Phase 3)
+│   │   │   ├── piston_client.py
 │   │   │   └── java_method_grader.py   (Phase 6)
 │   │   ├── realtime/
 │   │   │   └── websocket.py            (Phase 5)
@@ -205,7 +205,8 @@ programming-exam-system/
 │   ├── tests/
 │   │   ├── __init__.py
 │   │   ├── conftest.py
-│   │   └── test_api.py
+│   │   ├── test_api.py
+│   │   └── test_piston_client.py
 │   └── requirements.txt
 ├── java-socket-server/
 │   ├── pom.xml
@@ -232,9 +233,10 @@ programming-exam-system/
 │   ├── examples/
 │   └── README.md
 ├── deploy/
-│   ├── judge0/
+│   ├── piston/
 │   │   ├── docker-compose.yml
-│   │   └── judge0.conf
+│   │   ├── phase1_java_test.py
+│   │   └── data/piston/packages/          (installed runtimes — gitignored)
 │   └── scripts/
 ├── .env.example
 ├── .gitignore
@@ -353,11 +355,11 @@ The Java grading flow should:
 6. Produce a structured grading result for the Python backend.
 
 Important implementation details:
-- Reflection is not a security sandbox. Student code must still run inside Judge0 or another appropriately isolated environment.
+- Reflection is not a security sandbox. Student code must still run inside Piston or another appropriately isolated environment.
 - Do not expose hidden expected values or hidden tests in files or source code accessible to students.
 - Avoid brittle string parsing of Java source as the primary method of checking class structure.
 - Define behavior for overloaded methods, packages, constructors, static versus instance methods, exceptions, and supported data types.
-- Confirm how Judge0 accepts multiple files and custom harness files before implementing the final request format.
+- Confirm how Piston accepts multiple files and custom harness files before implementing the final request format.
 - Do not assume that a hidden test remains secret if it is embedded in a file visible to the submitted program or student. Treat all student-executable test data as potentially observable.
 
 ## 9. Realtime Message Protocol
@@ -405,23 +407,44 @@ Protocol rules:
 - Treat online status as approximate; a disconnected browser may take time to be detected.
 - Do not let clients set authoritative exam status, grades, roles, or another user's identity.
 
-## 10. Judge0 and Offline Operation
+## 10. Piston and Offline Operation
 
-Before building all features, verify that Judge0 runs locally on the target Windows machine.
+Piston is the selected local code-execution service. The project uses the Piston v2 API at `http://127.0.0.1:2000`; keep it bound to localhost and do not expose its privileged execution API directly to the LAN or Internet.
 
-- Check Docker Desktop and WSL2 requirements for the target Windows environment.
-- Pull and prepare all required container images while Internet is available.
-- Verify that Java and every other required language are supported by the selected Judge0 configuration.
-- Keep the required runtime images and dependencies available locally.
-- Configure execution limits for CPU/time, memory, process count, output size, and other supported resources.
-- Restrict network access for untrusted submissions where the deployment allows it.
-- Test a complete exam flow after disconnecting the PC from the Internet.
-- Document which services must be running and how to start/stop them.
-- Do not assume that “self-hosted” automatically means “works offline”; test offline operation explicitly.
+Deployment on the teacher's Windows PC:
+
+1. Install and start Docker Desktop with its WSL2 Linux engine.
+2. While Internet access is available, pull and start the Piston image:
+   `docker compose -f deploy/piston/docker-compose.yml up -d`
+3. Install the required language runtimes using Piston's package manager. Java 15.0.2 has been installed and verified with the project smoke test.
+4. Verify installed runtimes with `GET /api/v2/runtimes` and run `deploy/piston/phase1_java_test.py`.
+5. Test the complete application while disconnected from the Internet after all container images and runtime packages are present.
+
+To install Java on Windows with Git, Node.js, and npm available:
+
+```powershell
+$pistonCli = Join-Path $env:TEMP "piston-cli"
+git clone --depth 1 https://github.com/engineer-man/piston.git $pistonCli
+Push-Location (Join-Path $pistonCli "cli")
+npm install
+Pop-Location
+node (Join-Path $pistonCli "cli\index.js") -u http://127.0.0.1:2000 ppman install java
+```
+
+Run the verified Java smoke test from the repository root:
+
+```powershell
+python deploy\piston\phase1_java_test.py
+```
+
+Piston's image and language runtimes are separate downloads. The runtime directory `deploy/piston/data/piston/packages/` is persisted and gitignored; retain it for offline use. Other supported languages must be installed and tested explicitly before the exam.
+
+The Compose configuration disables networking for jobs and sets process, output, compile/run timeout, and memory limits. Review the limits against the course workload and machine resources before deployment. Piston requires a privileged container; keep its API on localhost and accept student code only through the authenticated application backend.
 
 Official references:
-- Judge0 self-hosting: https://docs.judge0.com/products/judge0/get_started/self_hosting/
-- Judge0 repository: https://github.com/judge0/judge0
+- Piston project and self-hosting: https://github.com/engineer-man/piston
+- Piston API v2: https://github.com/engineer-man/piston/blob/master/docs/api-v2.md
+- Piston configuration: https://github.com/engineer-man/piston/blob/master/docs/configuration.md
 - Docker Desktop WSL 2: https://docs.docker.com/desktop/features/wsl/
 - Docker Desktop installation on Windows: https://docs.docker.com/desktop/setup/install/windows-install/
 
@@ -433,12 +456,13 @@ Official references:
 - Apply request size limits and safe error responses.
 - Store uploads and source files safely; do not trust filenames or file extensions.
 - Never run untrusted submissions directly on the Windows host.
-- Configure and verify Judge0's isolation and resource limits; a sandbox reduces risk but is not a guarantee of complete security.
+- Configure and verify Piston's isolation and resource limits; a sandbox reduces risk but is not a guarantee of complete security.
+- Keep Piston bound to localhost; its container is privileged and its execution API must not be exposed to student devices.
 - Keep hidden test cases and expected outputs server-side as far as the execution model permits.
 - Limit stdout/stderr capture and stored logs to avoid resource exhaustion.
 - Use a durable job state in the database. On startup, recover eligible `QUEUED` jobs and handle jobs left in `RUNNING` according to a documented retry policy.
 - Make grading retries idempotent so the same submission is not accidentally awarded duplicate points.
-- Handle duplicate submissions, client disconnects, timeouts, Judge0 failures, and service restarts.
+- Handle duplicate submissions, client disconnects, timeouts, Piston failures, and service restarts.
 - Add audit logs for important teacher actions if time permits.
 - Restrict internal Socket service access and authenticate service-to-service messages.
 - Keep secrets and configuration in environment variables or local configuration files excluded from version control.
@@ -449,7 +473,7 @@ Build incrementally. Do not attempt all advanced features at once.
 
 ### Phase 1 — Environment validation
 - Verify Windows, Docker Desktop, and WSL2 compatibility.
-- Run Judge0 locally and test a small Java program.
+- Run Piston locally, install the required language runtimes, and test a small Java program. The Java 15.0.2 Piston smoke test has passed; offline operation still requires explicit testing.
 - Confirm that the selected languages work with Internet disconnected after setup.
 - Create the repository and environment configuration.
 
@@ -463,8 +487,10 @@ Build incrementally. Do not attempt all advanced features at once.
 - Implement student exam pages and code submission.
 - Persist submissions before grading.
 - Add a recoverable background worker.
-- Integrate Judge0 for standard input/output questions.
+- Integrate the Piston client for standard input/output questions.
 - Store test-level results and calculate scores.
+
+Current status: the Piston client and its unit tests exist; submission endpoints, durable grading worker, and scoring flow are still to be implemented.
 
 ### Phase 4 — Frontend completion
 - Implement teacher exam/question management and result views.
@@ -481,7 +507,7 @@ Build incrementally. Do not attempt all advanced features at once.
 
 ### Phase 6 — Java Reflection grading
 - Implement and test the Java harness separately with sample classes.
-- Integrate class/method questions with Judge0.
+- Integrate class/method questions with Piston.
 - Test signature mismatch, overloaded methods, exceptions, invalid return values, and multiple test cases.
 - Verify hidden-test handling and multi-file compilation behavior.
 
@@ -501,7 +527,7 @@ The MVP is complete when:
 - A teacher can create and run an exam.
 - A student can connect over the LAN and submit code.
 - The backend rejects submissions outside the permitted exam window.
-- A standard input/output Java submission is graded through Judge0.
+- A standard input/output Java submission is graded through Piston.
 - Results are saved and visible to authorized users.
 - The Socket Programming module demonstrates real two-way communication and at least one useful realtime feature.
 - The system can handle multiple connected students without blocking the API.
@@ -533,9 +559,9 @@ When implementing this project:
 Begin with these tasks in order:
 
 1. Inspect the repository and report the existing structure and working components.
-2. Verify the local development environment and the availability of Docker/Judge0 if possible.
+2. Verify the local development environment and the availability of Docker/Piston if possible.
 3. Propose a phased implementation plan based on the actual repository rather than assuming it is empty.
-4. Implement the smallest end-to-end slice: login or development authentication, one exam/question, student submission, Judge0 execution, and persisted result.
+4. Implement the smallest end-to-end slice: login or development authentication, one exam/question, student submission, Piston execution, and persisted result.
 5. Add automated tests for backend validation and grading-result handling.
 6. Implement the realtime protocol and Socket feature once the main API flow is clear.
 7. Add Java Reflection grading and deployment/offline checks.

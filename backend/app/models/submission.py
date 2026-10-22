@@ -24,7 +24,6 @@ class Submission(Base):
     status = Column(Enum(SubmissionStatus), default=SubmissionStatus.queued, nullable=False)
     score = Column(Float, nullable=True)
     max_score = Column(Float, nullable=False)
-    judge0_submission_id = Column(String(100), nullable=True)
     submitted_at = Column(DateTime, server_default=func.now())
     graded_at = Column(DateTime, nullable=True)
 
