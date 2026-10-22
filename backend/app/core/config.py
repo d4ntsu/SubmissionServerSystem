@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     socket_server_host: str = "127.0.0.1"
     socket_server_port: int = 9000
+    socket_server_shared_secret: str | None = None
 
     cors_origins: str = "http://localhost:3000"
 
