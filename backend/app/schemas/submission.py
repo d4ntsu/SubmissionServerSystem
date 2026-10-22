@@ -1,8 +1,14 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.submission import SubmissionStatus
+
+
+class SubmissionCreate(BaseModel):
+    question_id: int
+    language: str = Field(..., min_length=1, max_length=20)
+    source_code: str = Field(..., min_length=1)
 
 
 class SubmissionResponse(BaseModel):
@@ -14,6 +20,7 @@ class SubmissionResponse(BaseModel):
     status: SubmissionStatus
     score: float | None = None
     max_score: float
+    error_summary: str | None = None
     submitted_at: datetime | None = None
     graded_at: datetime | None = None
 
