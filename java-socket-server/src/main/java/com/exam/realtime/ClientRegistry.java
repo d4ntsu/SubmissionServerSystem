@@ -5,8 +5,11 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -22,8 +25,8 @@ public final class ClientRegistry {
     /** Maps clientId → ClientHandler for active TCP connections */
     private final Map<String, ClientHandler> onlineClients = new ConcurrentHashMap<>();
 
-    /** Maps userId → clientId so we can route messages to specific users */
-    private final Map<Integer, String> userToClient = new ConcurrentHashMap<>();
+    /** Maps userId → all active clientIds so multiple sessions remain online. */
+    private final Map<Integer, Set<String>> userToClients = new ConcurrentHashMap<>();
 
     /** Maps clientId → userId */
     private final Map<String, Integer> clientToUser = new ConcurrentHashMap<>();
@@ -142,6 +145,18 @@ public final class ClientRegistry {
         }
     }
 
+    /** Updates last-seen when the shared database has the presence column. */
+    public void markSeen(int userId) {
+        String sql = "UPDATE users SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?";
+        try (Connection conn = DatabaseConnection.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, userId);
+            stmt.executeUpdate();
+        } catch (SQLException e) {
+            // A standalone older database may not yet have the optional presence column.
+        }
+    }
+
     // --- In-memory connection tracking ---
 
     public void registerClient(String clientId, ClientHandler handler) {
@@ -149,56 +164,48 @@ public final class ClientRegistry {
     }
 
     public synchronized void associateUser(String clientId, int userId) {
-        Integer previousUserId = clientToUser.put(clientId, userId);
+        Integer previousUserId = clientToUser.get(clientId);
         if (previousUserId != null && previousUserId != userId) {
-            removeUserMapping(previousUserId, clientId);
+            removeClientFromUser(clientId, previousUserId);
         }
-        userToClient.put(userId, clientId);
-        markOnline(userId);
+
+        Set<String> clients = userToClients.computeIfAbsent(
+                userId, ignored -> ConcurrentHashMap.newKeySet()
+        );
+        boolean firstConnection = clients.isEmpty();
+        clients.add(clientId);
+        clientToUser.put(clientId, userId);
+        if (firstConnection) {
+            markOnline(userId);
+        }
     }
 
-    public synchronized void unregisterClient(String clientId) {
+    public void removeClient(String clientId) {
         onlineClients.remove(clientId);
         Integer userId = clientToUser.remove(clientId);
-        if (userId != null && userToClient.remove(userId, clientId)) {
-            String replacementClientId = clientToUser.entrySet().stream()
-                    .filter(entry -> entry.getValue().equals(userId)
-                            && onlineClients.containsKey(entry.getKey()))
-                    .map(Map.Entry::getKey)
-                    .findFirst()
-                    .orElse(null);
-            if (replacementClientId != null) {
-                userToClient.put(userId, replacementClientId);
-            } else {
-                markOffline(userId);
-            }
-        }
-    }
-
-    /** Backwards-compatible alias for existing callers. */
-    public void removeClient(String clientId) {
-        unregisterClient(clientId);
-    }
-
-    private void removeUserMapping(int userId, String clientId) {
-        if (userToClient.remove(userId, clientId)) {
-            String replacementClientId = clientToUser.entrySet().stream()
-                    .filter(entry -> entry.getValue().equals(userId)
-                            && onlineClients.containsKey(entry.getKey()))
-                    .map(Map.Entry::getKey)
-                    .findFirst()
-                    .orElse(null);
-            if (replacementClientId != null) {
-                userToClient.put(userId, replacementClientId);
-            } else {
-                markOffline(userId);
-            }
+        if (userId != null) {
+            userToClient.remove(userId);
+            markOffline(userId);
         }
     }
 
     public ClientHandler getHandlerByUserId(int userId) {
-        String clientId = userToClient.get(userId);
-        return clientId != null ? onlineClients.get(clientId) : null;
+        return getHandlersByUserId(userId).stream().findFirst().orElse(null);
+    }
+
+    public List<ClientHandler> getHandlersByUserId(int userId) {
+        Set<String> clientIds = userToClients.get(userId);
+        if (clientIds == null) {
+            return List.of();
+        }
+        List<ClientHandler> handlers = new ArrayList<>();
+        for (String clientId : clientIds) {
+            ClientHandler handler = onlineClients.get(clientId);
+            if (handler != null) {
+                handlers.add(handler);
+            }
+        }
+        return handlers;
     }
 
     public ClientHandler getHandlerByClientId(String clientId) {
@@ -253,6 +260,11 @@ public final class ClientRegistry {
     public boolean isUserOnline(int userId) {
         return userToClient.containsKey(userId);
     }
+
+        /** Returns all currently-connected client handlers (for broadcasting / iteration). */
+        public Map<String, ClientHandler> getOnlineClients() {
+            return onlineClients;
+        }
 
     // --- Data class ---
 

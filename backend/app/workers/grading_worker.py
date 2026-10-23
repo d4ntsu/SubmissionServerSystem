@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models.submission import Submission, SubmissionStatus
+from app.realtime.submission_events import publish_submission_event
 from app.services.grading_service import grade_submission
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ async def run_grading_worker(stop_event: asyncio.Event) -> None:
     while not stop_event.is_set():
         submission_id = _claim_next_submission()
         if submission_id is not None:
+            await publish_submission_event("submission.running", submission_id)
             try:
                 await grade_submission(submission_id)
             except Exception:

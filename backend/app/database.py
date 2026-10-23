@@ -1,6 +1,6 @@
 import os
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.core.config import settings
@@ -28,6 +28,18 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 class Base(DeclarativeBase):
     pass
+
+
+def ensure_user_presence_schema() -> None:
+    """Add presence metadata to databases created before last_seen_at existed."""
+    with engine.begin() as connection:
+        columns = {
+            column["name"] for column in inspect(connection).get_columns("users")
+        }
+        if "last_seen_at" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE users ADD COLUMN last_seen_at DATETIME"
+            )
 
 
 def get_db():

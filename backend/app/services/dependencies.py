@@ -13,17 +13,20 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
 ) -> User:
-    token = credentials.credentials
+    user = get_user_from_access_token(credentials.credentials, db)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    return user
+
+
+def get_user_from_access_token(token: str, db: Session) -> User | None:
     payload = decode_access_token(token)
     if not payload:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        return None
     user_id = payload.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    user = db.get(User, user_id)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-    return user
+    if isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0:
+        return None
+    return db.get(User, user_id)
 
 
 def require_role(role: UserRole):

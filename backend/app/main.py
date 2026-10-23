@@ -4,23 +4,18 @@ import asyncio
 import logging
 
 from app.core.config import settings
-from app.database import Base, engine
+from app.database import Base, engine, ensure_user_presence_schema
 from app.models import *  # noqa: F401,F403 - register all models for metadata
-from app.api import auth, exams, questions, test_cases, submissions, results
-from app.realtime import RealtimeBridge
+from app.api import auth, exams, questions, test_cases, submissions, results, realtime
+from app.realtime.manager import realtime_manager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
+ensure_user_presence_schema()
 
 app = FastAPI(title="LAN Programming Exam System", version="0.1.0")
-realtime_bridge = RealtimeBridge(
-    settings.socket_server_host,
-    settings.socket_server_port,
-    settings.socket_server_shared_secret,
-)
-app.state.realtime_bridge = realtime_bridge
 
 origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
 app.add_middleware(
@@ -37,6 +32,7 @@ app.include_router(questions.router)
 app.include_router(test_cases.router)
 app.include_router(submissions.router)
 app.include_router(results.router)
+app.include_router(realtime.router)
 
 _worker_stop_event: asyncio.Event | None = None
 _worker_task: asyncio.Task | None = None
@@ -57,6 +53,7 @@ async def start_grading_worker():
     global _worker_stop_event, _worker_task
     from app.workers.grading_worker import run_grading_worker
 
+    await asyncio.to_thread(app.state.realtime_manager.reset_stale_presence)
     _worker_stop_event = asyncio.Event()
     _worker_task = asyncio.create_task(run_grading_worker(_worker_stop_event))
     logger.info("Grading worker task created")
@@ -73,6 +70,7 @@ async def stop_grading_worker():
             await _worker_task
         except asyncio.CancelledError:
             pass
+    await app.state.realtime_manager.shutdown()
     logger.info("Grading worker stopped")
 
 

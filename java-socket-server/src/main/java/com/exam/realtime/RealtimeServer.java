@@ -143,38 +143,29 @@ public class RealtimeServer {
         }
     }
 
-    private void shutdown() {
-        if (!shutdown.compareAndSet(false, true)) {
-            return;
-        }
-
-        synchronized (lifecycleLock) {
-            running = false;
-            ServerSocket listener = serverSocket;
-            if (listener != null) {
-                closeQuietly(listener);
-            }
-
-            registry.closeAllClients();
-            clientExecutor.shutdown();
-        }
-
+    /**
+     * Gracefully shuts down the server.
+     */
+    public void stop() {
+        running = false;
         try {
-            if (!clientExecutor.awaitTermination(SHUTDOWN_WAIT_SECONDS, TimeUnit.SECONDS)) {
-                clientExecutor.shutdownNow();
-                if (!clientExecutor.awaitTermination(SHUTDOWN_WAIT_SECONDS, TimeUnit.SECONDS)) {
-                    LOGGER.warning("Some TCP client workers did not stop before the shutdown deadline");
-                }
+            if (serverSocket != null && !serverSocket.isClosed()) {
+                serverSocket.close();
             }
-        } catch (InterruptedException e) {
-            clientExecutor.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
-
-        LOGGER.info("Realtime TCP server stopped");
+        } catch (IOException ignored) {}
+        registry.closeAll();
+        threadPool.shutdownNow();
+        System.out.println("=== Realtime Server stopped ===");
     }
 
-    /** Routes a message by its recipient field. Business authorization remains upstream. */
+    /**
+     * Routes an incoming message from the FastAPI bridge or a connected client.
+     * Messages are delivered based on the recipient field:
+     * - "broadcast" → all connected clients
+     * - "student:123" → specific user
+     * - "role:student" → all users with role "student"
+     * - "role:teacher" → all users with role "teacher"
+     */
     public void routeMessage(Message msg) {
         if (msg == null) {
             return;
@@ -188,11 +179,9 @@ public class RealtimeServer {
         if ("broadcast".equals(recipient)) {
             registry.broadcast(msg);
         } else if (recipient.startsWith("student:")) {
-            try {
-                int userId = Integer.parseInt(recipient.substring("student:".length()));
-                registry.sendToUser(userId, msg);
-            } catch (NumberFormatException e) {
-                LOGGER.log(Level.WARNING, "Ignoring invalid user recipient: {0}", recipient);
+            int userId = Integer.parseInt(recipient.substring("student:".length()));
+            for (ClientHandler handler : registry.getHandlersByUserId(userId)) {
+                handler.send(msg);
             }
         } else if (recipient.startsWith("role:")) {
             String targetRole = recipient.substring("role:".length());

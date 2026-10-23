@@ -25,7 +25,7 @@ class MessageTest {
     void testDeserialize() throws JsonProcessingException {
         String json = "{"
                 + "\"type\":\"client.hello\","
-                + "\"requestId\":\"abc-123\","
+                + "\"request_id\":\"550e8400-e29b-41d4-a716-446655440000\","
                 + "\"sender\":\"client:127.0.0.1\","
                 + "\"recipient\":\"server\","
                 + "\"timestamp\":\"2025-01-01T00:00:00Z\","
@@ -34,7 +34,7 @@ class MessageTest {
 
         Message msg = Message.fromJson(json);
         assertEquals("client.hello", msg.getType());
-        assertEquals("abc-123", msg.getRequestId());
+        assertEquals("550e8400-e29b-41d4-a716-446655440000", msg.getRequestId());
         assertEquals(42, ((Number) msg.getPayload().get("user_id")).intValue());
     }
 }

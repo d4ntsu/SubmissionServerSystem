@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.user import UserRole
 
@@ -23,6 +23,14 @@ class UserResponse(BaseModel):
     full_name: str
     role: UserRole
     is_online: int = 0
+    last_seen_at: datetime | None = None
     created_at: datetime | None = None
+
+    @field_validator("last_seen_at", mode="after")
+    @classmethod
+    def assume_utc_for_sqlite_timestamp(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
 
     model_config = {"from_attributes": True}
