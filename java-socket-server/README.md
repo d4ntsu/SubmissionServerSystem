@@ -45,7 +45,7 @@ Edit `src/main/resources/server.properties` or set environment variables:
 |---|---|---|---|
 | `server.host` | `SOCKET_HOST` | `127.0.0.1` | Bind address |
 | `server.port` | `SOCKET_PORT` | `9000` | TCP port |
-| `database.path` | `DATABASE_PATH` | `../backend/app/data/exam_system.db` | SQLite DB path |
+| `database.path` | `DATABASE_PATH` | `../backend/data/exam_system.db` | SQLite DB path |
 | `auth.shared_secret` | `SHARED_SECRET` | `dev-secret-change-in-production` | Shared auth secret |
 
 ## Message Protocol
