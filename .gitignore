@@ -7,7 +7,7 @@ build/
 .venv/
 venv/
 .venv311/
-
+.gemini/
 # Node / Next.js
 node_modules/
 .next/
