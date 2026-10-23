@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -15,6 +16,15 @@ from app.models.submission import Submission
 from app.models.user import User, UserRole
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class BrowserConnection:
+    websocket: WebSocket
+    role: str
+    connected_at: datetime
+    last_seen_at: datetime
+    last_persisted_at: datetime
 
 PUBLIC_EVENT_FIELDS: dict[str, set[str]] = {
     "exam.started": {"exam_id", "title", "start_time", "end_time"},
@@ -48,21 +58,39 @@ REQUIRED_EVENT_FIELDS = {
 class RealtimeManager:
     """Tracks browser sockets and routes validated events from trusted backend code."""
 
-    def __init__(self, heartbeat_timeout_seconds: float = 90.0):
+    def __init__(
+        self,
+        heartbeat_timeout_seconds: float = 90.0,
+        send_timeout_seconds: float = 5.0,
+        heartbeat_persist_interval_seconds: float = 15.0,
+    ):
+        if (
+            heartbeat_timeout_seconds <= 0
+            or send_timeout_seconds <= 0
+            or heartbeat_persist_interval_seconds < 0
+        ):
+            raise ValueError("Timeouts must be positive and persistence interval nonnegative")
         self.heartbeat_timeout_seconds = heartbeat_timeout_seconds
-        self._connections: dict[int, dict[int, tuple[WebSocket, str]]] = {}
+        self.send_timeout_seconds = send_timeout_seconds
+        self.heartbeat_persist_interval_seconds = heartbeat_persist_interval_seconds
+        self._connections: dict[int, dict[int, BrowserConnection]] = {}
+        self._presence_locks: dict[int, asyncio.Lock] = {}
         self._lock = asyncio.Lock()
 
     async def register(self, websocket: WebSocket, user_id: int, role: str) -> int:
         await websocket.accept()
+        now = datetime.now(timezone.utc)
         async with self._lock:
             user_connections = self._connections.setdefault(user_id, {})
-            first_connection = not user_connections
-            user_connections[id(websocket)] = (websocket, role)
+            user_connections[id(websocket)] = BrowserConnection(
+                websocket=websocket,
+                role=role,
+                connected_at=now,
+                last_seen_at=now,
+                last_persisted_at=now,
+            )
             connection_count = len(user_connections)
-
-        if first_connection:
-            self._set_user_online(user_id, True)
+        await self._sync_user_presence(user_id)
         return connection_count
 
     async def unregister(self, websocket: WebSocket, user_id: int) -> bool:
@@ -70,14 +98,42 @@ class RealtimeManager:
         async with self._lock:
             user_connections = self._connections.get(user_id)
             if user_connections is not None:
-                user_connections.pop(id(websocket), None)
-                if not user_connections:
+                removed = user_connections.pop(id(websocket), None)
+                if removed is not None and not user_connections:
                     self._connections.pop(user_id, None)
                     became_offline = True
+                else:
+                    return False
+            else:
+                return False
 
-        if became_offline:
-            self._set_user_online(user_id, False)
+        if removed is not None:
+            await self._sync_user_presence(user_id)
         return became_offline
+
+    async def record_heartbeat(self, websocket: WebSocket, user_id: int) -> bool:
+        """Refresh one authenticated session and persist approximate user liveness."""
+        now = datetime.now(timezone.utc)
+        should_persist = False
+        async with self._lock:
+            connection = self._connections.get(user_id, {}).get(id(websocket))
+            if connection is None:
+                return False
+            connection.last_seen_at = now
+            if (
+                (now - connection.last_persisted_at).total_seconds()
+                >= self.heartbeat_persist_interval_seconds
+            ):
+                connection.last_persisted_at = now
+                should_persist = True
+        if should_persist:
+            await self._sync_user_presence(user_id)
+        return True
+
+    async def last_seen(self, websocket: WebSocket, user_id: int) -> datetime | None:
+        async with self._lock:
+            connection = self._connections.get(user_id, {}).get(id(websocket))
+            return connection.last_seen_at if connection else None
 
     async def connection_count(self, user_id: int) -> int:
         async with self._lock:
@@ -88,7 +144,10 @@ class RealtimeManager:
         if outbound["type"] in PRIVATE_SUBMISSION_TYPES:
             raise ValueError("Private submission events must be routed through publish_bridge_event")
         async with self._lock:
-            sockets = [entry[0] for entry in self._connections.get(user_id, {}).values()]
+            sockets = [
+                connection.websocket
+                for connection in self._connections.get(user_id, {}).values()
+            ]
         return await self._send_to_sockets(user_id, sockets, outbound)
 
     async def broadcast_to_browsers(self, event: dict[str, Any]) -> int:
@@ -96,7 +155,11 @@ class RealtimeManager:
         if outbound["type"] not in PUBLIC_BROADCAST_TYPES:
             raise ValueError("Only public exam events may be broadcast")
         async with self._lock:
-            sockets = [socket for entries in self._connections.values() for socket, _ in entries.values()]
+            sockets = [
+                connection.websocket
+                for entries in self._connections.values()
+                for connection in entries.values()
+            ]
         return await self._send_to_sockets(None, sockets, outbound)
 
     async def broadcast_to_role(self, role: str, event: dict[str, Any]) -> int:
@@ -107,8 +170,9 @@ class RealtimeManager:
             sockets = [
                 socket
                 for entries in self._connections.values()
-                for socket, connection_role in entries.values()
-                if connection_role == role
+                for connection in entries.values()
+                for socket in (connection.websocket,)
+                if connection.role == role
             ]
         return await self._send_to_sockets(None, sockets, outbound)
 
@@ -149,7 +213,8 @@ class RealtimeManager:
             connections = [
                 (user_id, socket)
                 for user_id, entries in self._connections.items()
-                for socket, _ in entries.values()
+                for connection in entries.values()
+                for socket in (connection.websocket,)
             ]
             user_ids = list(self._connections)
             self._connections.clear()
@@ -160,11 +225,14 @@ class RealtimeManager:
             except (RuntimeError, OSError, WebSocketDisconnect):
                 pass
         for user_id in user_ids:
-            self._set_user_online(user_id, False)
+            await self._sync_user_presence(user_id)
 
     async def _send_private_to_user(self, user_id: int, event: dict[str, Any]) -> int:
         async with self._lock:
-            sockets = [socket for socket, _ in self._connections.get(user_id, {}).values()]
+            sockets = [
+                connection.websocket
+                for connection in self._connections.get(user_id, {}).values()
+            ]
         return await self._send_to_sockets(user_id, sockets, event)
 
     async def _send_to_sockets(
@@ -173,21 +241,40 @@ class RealtimeManager:
         sockets: list[WebSocket],
         event: dict[str, Any],
     ) -> int:
-        delivered = 0
-        failed: list[tuple[WebSocket, int | None]] = []
-        for socket in sockets:
+        async def send_one(socket: WebSocket) -> bool:
             try:
-                await socket.send_json(event)
-                delivered += 1
-            except (WebSocketDisconnect, RuntimeError, OSError):
-                failed.append((socket, user_id))
+                await asyncio.wait_for(
+                    socket.send_json(event), timeout=self.send_timeout_seconds
+                )
+                return True
+            except (WebSocketDisconnect, RuntimeError, OSError, asyncio.TimeoutError):
+                return False
+            except Exception:
+                logger.exception("Unexpected realtime send failure")
+                return False
 
-        for socket, target_user_id in failed:
-            if target_user_id is not None:
-                await self.unregister(socket, target_user_id)
+        outcomes = await asyncio.gather(*(send_one(socket) for socket in sockets))
+        delivered = sum(outcomes)
+        failed = [socket for socket, succeeded in zip(sockets, outcomes) if not succeeded]
+
+        await asyncio.gather(*(self._close_failed_socket(socket) for socket in failed))
+        for socket in failed:
+            if user_id is not None:
+                await self.unregister(socket, user_id)
             else:
                 await self._unregister_socket(socket)
         return delivered
+
+    @staticmethod
+    async def _close_failed_socket(socket: WebSocket) -> None:
+        try:
+            await asyncio.wait_for(
+                socket.close(code=1011, reason="Realtime send failed"), timeout=1.0
+            )
+        except (WebSocketDisconnect, RuntimeError, OSError):
+            pass
+        except asyncio.TimeoutError:
+            logger.warning("Timed out closing an unresponsive realtime socket")
 
     async def _unregister_socket(self, socket: WebSocket) -> None:
         async with self._lock:
@@ -226,13 +313,46 @@ class RealtimeManager:
                 return submission.student_id
         raise ValueError("Submission event recipient is not authorized for this submission")
 
+    def reset_stale_presence(self) -> None:
+        """Clear persisted online flags after process restart; sockets are process-local."""
+        db = SessionLocal()
+        try:
+            db.query(User).filter(User.is_online != 0).update(
+                {User.is_online: 0}, synchronize_session=False
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Could not clear stale user presence during startup")
+        finally:
+            db.close()
+
+    async def _sync_user_presence(self, user_id: int) -> None:
+        """Persist one user's current session state without holding the global socket lock."""
+        presence_lock = self._presence_locks.setdefault(user_id, asyncio.Lock())
+        async with presence_lock:
+            async with self._lock:
+                connections = self._connections.get(user_id, {})
+                is_online = bool(connections)
+                last_seen_at = (
+                    max(item.last_seen_at for item in connections.values())
+                    if connections
+                    else datetime.now(timezone.utc)
+                )
+            await asyncio.to_thread(
+                self._persist_user_presence, user_id, is_online, last_seen_at
+            )
+
     @staticmethod
-    def _set_user_online(user_id: int, is_online: bool) -> None:
+    def _persist_user_presence(
+        user_id: int, is_online: bool, last_seen_at: datetime
+    ) -> None:
         db = SessionLocal()
         try:
             user = db.get(User, user_id)
-            if user is not None and user.is_online != int(is_online):
+            if user is not None:
                 user.is_online = int(is_online)
+                user.last_seen_at = last_seen_at
                 db.commit()
         except Exception:
             db.rollback()

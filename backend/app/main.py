@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 from app.core.config import settings
-from app.database import Base, engine
+from app.database import Base, engine, ensure_user_presence_schema
 from app.models import *  # noqa: F401,F403 - register all models for metadata
 from app.api import auth, exams, questions, test_cases, submissions, results, realtime
 from app.realtime.manager import realtime_manager
@@ -13,6 +13,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
+ensure_user_presence_schema()
 
 app = FastAPI(title="LAN Programming Exam System", version="0.1.0")
 app.state.realtime_manager = realtime_manager
@@ -43,6 +44,7 @@ async def start_grading_worker():
     global _worker_stop_event, _worker_task
     from app.workers.grading_worker import run_grading_worker
 
+    await asyncio.to_thread(app.state.realtime_manager.reset_stale_presence)
     _worker_stop_event = asyncio.Event()
     _worker_task = asyncio.create_task(run_grading_worker(_worker_stop_event))
     logger.info("Grading worker task created")

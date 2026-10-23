@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.user import User
+from app.realtime.submission_events import publish_submission_event_from_sync
 from app.schemas.submission import SubmissionCreate, SubmissionResponse
 from app.services.dependencies import get_current_user
 from app.services.submission_service import (
@@ -31,6 +32,7 @@ def submit_code(
         )
     except SubmissionValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    publish_submission_event_from_sync("submission.received", submission.id)
     return submission
 
 

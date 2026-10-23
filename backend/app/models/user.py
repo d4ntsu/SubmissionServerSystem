@@ -18,7 +18,8 @@ class User(Base):
     hashed_password = Column(String(128), nullable=False)
     full_name = Column(String(100), nullable=False)
     role = Column(Enum(UserRole), nullable=False)
-    is_online = Column(Integer, default=0)
+    is_online = Column(Integer, default=0, nullable=False)
+    last_seen_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
     def __repr__(self):

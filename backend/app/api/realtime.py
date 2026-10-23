@@ -44,7 +44,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             "role": role,
             "connection_count": connection_count,
         })
-        await _receive_client_messages(websocket, manager.heartbeat_timeout_seconds)
+        await _receive_client_messages(websocket, manager, user_id)
     except WebSocketDisconnect:
         pass
     except (RuntimeError, OSError):
@@ -59,9 +59,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         await manager.unregister(websocket, user_id)
 
 
-async def _receive_client_messages(websocket: WebSocket, heartbeat_timeout_seconds: float) -> None:
+async def _receive_client_messages(
+    websocket: WebSocket, manager: RealtimeManager, user_id: int
+) -> None:
     loop = asyncio.get_running_loop()
-    heartbeat_deadline = loop.time() + heartbeat_timeout_seconds
+    heartbeat_deadline = loop.time() + manager.heartbeat_timeout_seconds
     protocol_errors = 0
 
     while True:
@@ -103,10 +105,16 @@ async def _receive_client_messages(websocket: WebSocket, heartbeat_timeout_secon
                         await _send_protocol_error(websocket, "invalid_request_id", "request_id must be a UUID")
                         request_id = None
                     else:
-                        heartbeat_deadline = loop.time() + heartbeat_timeout_seconds
+                        if not await manager.record_heartbeat(websocket, user_id):
+                            await websocket.close(code=1001, reason="Connection is no longer active")
+                            return
+                        heartbeat_deadline = loop.time() + manager.heartbeat_timeout_seconds
                         await _send_heartbeat_ack(websocket, request_id)
                 else:
-                    heartbeat_deadline = loop.time() + heartbeat_timeout_seconds
+                    if not await manager.record_heartbeat(websocket, user_id):
+                        await websocket.close(code=1001, reason="Connection is no longer active")
+                        return
+                    heartbeat_deadline = loop.time() + manager.heartbeat_timeout_seconds
                     await _send_heartbeat_ack(websocket, None)
 
         if protocol_errors >= MAX_PROTOCOL_ERRORS:

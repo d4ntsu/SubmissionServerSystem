@@ -61,6 +61,7 @@ public class RealtimeServer {
                 serverSocket.close();
             }
         } catch (IOException ignored) {}
+        registry.closeAll();
         threadPool.shutdownNow();
         System.out.println("=== Realtime Server stopped ===");
     }
@@ -81,8 +82,7 @@ public class RealtimeServer {
             broadcast(msg);
         } else if (recipient.startsWith("student:")) {
             int userId = Integer.parseInt(recipient.substring("student:".length()));
-            ClientHandler handler = registry.getHandlerByUserId(userId);
-            if (handler != null) {
+            for (ClientHandler handler : registry.getHandlersByUserId(userId)) {
                 handler.send(msg);
             }
         } else if (recipient.startsWith("role:")) {

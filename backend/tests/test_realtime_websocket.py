@@ -1,5 +1,7 @@
 import asyncio
+import time
 import uuid
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,6 +13,7 @@ from app.main import app
 from app.models.exam import Exam
 from app.models.question import Question, QuestionType
 from app.models.submission import Submission, SubmissionStatus
+from app.models.user import User
 from app.realtime.manager import RealtimeManager
 
 
@@ -24,20 +27,32 @@ def _ws_path(token: str) -> str:
     return f"/ws/realtime?token={token}"
 
 
-def test_authenticated_connection_and_heartbeat(client, student_token):
+def test_authenticated_connection_and_heartbeat(client, student_token, monkeypatch):
     student_id = _user_id(client, student_token)
+    monkeypatch.setattr(app.state.realtime_manager, "heartbeat_persist_interval_seconds", 0)
     with client.websocket_connect(_ws_path(student_token)) as websocket:
         ready = websocket.receive_json()
         assert ready["type"] == "connection.ready"
         assert ready["user_id"] == student_id
         assert ready["role"] == "student"
 
+        profile_before_heartbeat = client.get(
+            "/auth/me", headers={"Authorization": f"Bearer {student_token}"}
+        ).json()
+        assert profile_before_heartbeat["is_online"] == 1
+        assert profile_before_heartbeat["last_seen_at"] is not None
+
         request_id = str(uuid.uuid4())
+        time.sleep(0.01)
         websocket.send_json({"type": "client.heartbeat", "request_id": request_id})
         heartbeat = websocket.receive_json()
         assert heartbeat["type"] == "client.heartbeat"
         assert heartbeat["request_id"] == request_id
         assert heartbeat["payload"] == {"alive": True}
+        profile_after_heartbeat = client.get(
+            "/auth/me", headers={"Authorization": f"Bearer {student_token}"}
+        ).json()
+        assert profile_after_heartbeat["last_seen_at"] > profile_before_heartbeat["last_seen_at"]
 
 
 def test_websocket_role_comes_from_database_not_jwt_role_claim(client, student_token):
@@ -89,6 +104,7 @@ def test_multiple_tabs_only_mark_user_offline_after_last_disconnect(client, stud
         response = client.get("/auth/me", headers={"Authorization": f"Bearer {student_token}"})
         assert response.json()["id"] == student_id
         assert response.json()["is_online"] == 1
+        assert response.json()["last_seen_at"] is not None
     finally:
         second_socket.__exit__(None, None, None)
 
@@ -272,3 +288,75 @@ def test_stale_websocket_is_closed_and_unregistered(client, student_token):
     response = client.get("/auth/me", headers={"Authorization": f"Bearer {student_token}"})
     assert response.json()["id"] == student_id
     assert response.json()["is_online"] == 0
+
+
+def test_six_concurrent_clients_isolate_slow_sends_and_route_events():
+    manager = RealtimeManager(send_timeout_seconds=0.1)
+    fast_sockets = [FakeWebSocket() for _ in range(5)]
+
+    class SlowWebSocket(FakeWebSocket):
+        async def send_json(self, event):
+            await asyncio.Event().wait()
+
+    slow_socket = SlowWebSocket()
+    user_ids = list(range(800_000, 800_006))
+    sockets = [*fast_sockets, slow_socket]
+    announcement = {
+        "type": "exam.started",
+        "payload": {"exam_id": 1, "title": "Concurrent exam"},
+    }
+
+    async def run_scenario():
+        await asyncio.gather(*(
+            manager.register(socket, user_id, "student")
+            for socket, user_id in zip(sockets, user_ids)
+        ))
+
+        broadcast = asyncio.create_task(manager.broadcast_to_browsers(announcement))
+        await asyncio.sleep(0.01)
+        assert all(socket.sent for socket in fast_sockets)
+        assert not broadcast.done()
+        assert await broadcast == 5
+        assert slow_socket.closed == [(1011, "Realtime send failed")]
+        assert await manager.connection_count(user_ids[-1]) == 0
+
+        targeted = {
+            "type": "exam.announcement",
+            "payload": {"exam_id": 1, "message": "Targeted notice"},
+        }
+        assert await manager.send_to_browser(user_ids[2], targeted) == 1
+        assert len(fast_sockets[2].sent) == 2
+        assert all(len(socket.sent) == 1 for index, socket in enumerate(fast_sockets) if index != 2)
+
+        await manager.shutdown()
+        for socket, user_id in zip(sockets, user_ids):
+            assert await manager.connection_count(user_id) == 0
+
+    asyncio.run(run_scenario())
+
+
+def test_startup_presence_recovery_clears_online_flags_but_keeps_last_seen(
+    client, student_token
+):
+    student_id = _user_id(client, student_token)
+    db = SessionLocal()
+    try:
+        user = db.get(User, student_id)
+        user.is_online = 1
+        db.commit()
+        last_seen = user.last_seen_at
+    finally:
+        db.close()
+
+    RealtimeManager().reset_stale_presence()
+
+    profile = client.get(
+        "/auth/me", headers={"Authorization": f"Bearer {student_token}"}
+    ).json()
+    assert profile["is_online"] == 0
+    assert profile["last_seen_at"] is not None
+    if last_seen is not None:
+        reported_last_seen = datetime.fromisoformat(
+            profile["last_seen_at"].replace("Z", "+00:00")
+        ).replace(tzinfo=None)
+        assert reported_last_seen == last_seen.replace(tzinfo=None)

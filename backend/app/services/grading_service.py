@@ -12,6 +12,7 @@ from app.models.submission import (
 )
 from app.models.test_case import TestCase
 from app.services.piston_client import PistonClient, PistonClientError
+from app.realtime.submission_events import publish_submission_event
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ async def grade_submission(submission_id: int) -> None:
 
         question = db.get(Question, submission.question_id)
         if not question:
-            _fail_submission(db, submission, "Question not found")
+            await _fail_submission(db, submission, "Question not found")
             return
 
         test_cases = (
@@ -46,19 +47,19 @@ async def grade_submission(submission_id: int) -> None:
             .all()
         )
         if not test_cases:
-            _fail_submission(db, submission, "No test cases configured for this question")
+            await _fail_submission(db, submission, "No test cases configured for this question")
             return
 
         if question.question_type == QuestionType.stdio:
             await _grade_stdio(db, submission, question, test_cases)
         else:
-            _fail_submission(db, submission, "Java class/method grading is not yet implemented")
+            await _fail_submission(db, submission, "Java class/method grading is not yet implemented")
 
     except PistonClientError as exc:
-        _fail_submission(db, submission, f"Piston error: {exc}")
+        await _fail_submission(db, submission, f"Piston error: {exc}")
     except Exception:
         logger.exception("Unexpected error grading submission %d", submission_id)
-        _fail_submission(db, submission, "Internal grading error")
+        await _fail_submission(db, submission, "Internal grading error")
     finally:
         db.close()
 
@@ -119,6 +120,7 @@ async def _grade_stdio(
     submission.score = round(score, 2)
     submission.graded_at = datetime.now(timezone.utc)
     db.commit()
+    await publish_submission_event("submission.completed", submission.id)
 
 
 def _create_test_result(
@@ -146,7 +148,7 @@ def _create_test_result(
     db.commit()
 
 
-def _fail_submission(db: Session, submission: Submission, message: str) -> None:
+async def _fail_submission(db: Session, submission: Submission, message: str) -> None:
     try:
         submission.status = SubmissionStatus.error
         submission.error_summary = message
@@ -154,3 +156,5 @@ def _fail_submission(db: Session, submission: Submission, message: str) -> None:
     except Exception:
         db.rollback()
         logger.exception("Failed to persist error status for submission %d", submission.id)
+        return
+    await publish_submission_event("submission.failed", submission.id)

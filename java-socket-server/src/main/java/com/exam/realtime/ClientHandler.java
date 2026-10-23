@@ -14,9 +14,12 @@ import java.nio.charset.StandardCharsets;
  */
 public class ClientHandler implements Runnable {
 
+    private static final int DEFAULT_HEARTBEAT_TIMEOUT_MILLIS = 90_000;
+
     private final Socket socket;
     private final ClientRegistry registry;
     private final RealtimeServer server; // For sending internal messages from FastAPI bridge
+    private final int heartbeatTimeoutMillis;
 
     private String clientId;
     private Integer userId;
@@ -27,15 +30,25 @@ public class ClientHandler implements Runnable {
     private PrintWriter out;
 
     public ClientHandler(Socket socket, ClientRegistry registry, RealtimeServer server) {
+        this(socket, registry, server, DEFAULT_HEARTBEAT_TIMEOUT_MILLIS);
+    }
+
+    ClientHandler(Socket socket, ClientRegistry registry, RealtimeServer server,
+                  int heartbeatTimeoutMillis) {
+        if (heartbeatTimeoutMillis <= 0) {
+            throw new IllegalArgumentException("Heartbeat timeout must be positive");
+        }
         this.socket = socket;
         this.registry = registry;
         this.server = server;
+        this.heartbeatTimeoutMillis = heartbeatTimeoutMillis;
         this.clientId = socket.getRemoteSocketAddress().toString();
     }
 
     @Override
     public void run() {
         try {
+            socket.setSoTimeout(heartbeatTimeoutMillis);
             InputStream socketInput = socket.getInputStream();
             in = new MessageFrameReader(socketInput);
             out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
@@ -134,8 +147,8 @@ public class ClientHandler implements Runnable {
     }
 
     private void handleHeartbeat() {
-        // Send pong — nothing else needed; connection liveness is implicit
         if (authenticated) {
+            registry.markSeen(userId);
             Message pong = Message.create(Message.Type.CLIENT_HEARTBEAT, "server", "client:" + clientId);
             pong.setPayload(java.util.Map.of("alive", true));
             send(pong);

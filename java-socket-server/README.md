@@ -98,6 +98,18 @@ The existing `client.hello` handler still looks up the supplied `user_id` in SQL
 mvn test
 ```
 
+## Project realtime checks
+
+From the repository root, run the combined FastAPI and Java component suites:
+
+```powershell
+.\scripts\run_realtime_acceptance.ps1
+```
+
+To manually exercise browser authentication, heartbeat, multiple tabs, and teacher exam start/end events, start FastAPI and run `backend/manual_tests/realtime_manual_runner.py`. The runner and its limitations are documented in the [realtime/socket acceptance checklist](../docs/RealtimeSocketAcceptanceChecklist.md).
+
+The current backend does not contain a FastAPI TCP client, so these checks do not demonstrate forwarding between this Java server and FastAPI.
+
 ## Database Schema Requirements
 
 The server reads from the `users` table (id, username, full_name, role). If the optional `is_online` column exists, the server will update it on connect/disconnect.
