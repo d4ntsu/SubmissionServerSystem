@@ -50,20 +50,47 @@ Edit `src/main/resources/server.properties` or set environment variables:
 
 ## Message Protocol
 
-Newline-delimited JSON over TCP. See [Message.java](src/main/java/com/exam/realtime/Message.java) for the full schema.
+Newline-delimited UTF-8 JSON over TCP. Each message is one complete JSON object followed by `\n`; a TCP read may contain part of a frame or several frames. Frames are limited to 64 KiB before the line-feed; an optional carriage return counts toward the limit. The server rejects incomplete final frames, invalid UTF-8, unknown fields, unsupported event types, and payloads that do not match the event schema.
 
-### Client → Server
-```
-{"type":"client.hello","requestId":"...","sender":"...","payload":{"user_id":42}}
-{"type":"client.heartbeat","requestId":"...","sender":"..."}
+The envelope keeps the existing flat field names for compatibility. `request_id` is accepted as an alias for `requestId`; Java emits `requestId`.
+
+```json
+{
+  "type": "exam.announcement",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "sender": "fastapi",
+  "recipient": "role:student",
+  "timestamp": "2026-10-22T10:00:00Z",
+  "payload": { "exam_id": 17, "message": "Exam begins soon" }
+}
 ```
 
-### Server → Client
+Supported event types:
+
+```text
+client.hello, client.heartbeat, client.status
+exam.started, exam.ended, exam.announcement
+submission.received, submission.running, submission.completed, submission.failed
+server.error
 ```
-{"type":"client.status","requestId":"...","recipient":"...","payload":{"authenticated":true,...}}
-{"type":"exam.announcement","requestId":"...","recipient":"...","payload":{"message":"..."}}
-{"type":"submission.status","requestId":"...","recipient":"...","payload":{"submission_id":123,"status":"RUNNING"}}
+
+Payloads use event-specific allowlists. Submission events carry `submission_id`; exam start/end carry `exam_id`; announcements carry `exam_id` and `message`. Sensitive fields such as passwords, tokens, source code, hidden tests, expected outputs, grades, and scores are rejected.
+
+### Client to Server
+
 ```
+{"type":"client.hello","requestId":"550e8400-e29b-41d4-a716-446655440000","sender":"client:127.0.0.1","recipient":"server","timestamp":"2026-10-22T10:00:00Z","payload":{"user_id":42}}
+{"type":"client.heartbeat","requestId":"550e8400-e29b-41d4-a716-446655440000","sender":"client:127.0.0.1","recipient":"server","timestamp":"2026-10-22T10:00:00Z","payload":{}}
+```
+
+### Server to Client
+
+```
+{"type":"client.status","requestId":"550e8400-e29b-41d4-a716-446655440000","sender":"server","recipient":"client:/127.0.0.1:9000","timestamp":"2026-10-22T10:00:00Z","payload":{"authenticated":true,"user_id":42,"username":"student1","role":"student","online_count":1}}
+{"type":"submission.running","requestId":"550e8400-e29b-41d4-a716-446655440000","sender":"fastapi","recipient":"student:42","timestamp":"2026-10-22T10:00:00Z","payload":{"submission_id":123}}
+```
+
+The existing `client.hello` handler still looks up the supplied `user_id` in SQLite and treats a match as authenticated. That lookup does not prove the caller owns the account; token or service authentication remains a separate required security improvement.
 
 ## Testing
 

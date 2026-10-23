@@ -1,11 +1,11 @@
 package com.exam.realtime;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.InputStream;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Handles a single TCP client connection.
@@ -23,7 +23,7 @@ public class ClientHandler implements Runnable {
     private String role;
     private boolean authenticated = false;
 
-    private BufferedReader in;
+    private MessageFrameReader in;
     private PrintWriter out;
 
     public ClientHandler(Socket socket, ClientRegistry registry, RealtimeServer server) {
@@ -36,34 +36,49 @@ public class ClientHandler implements Runnable {
     @Override
     public void run() {
         try {
-            in = new BufferedReader(new InputStreamReader(socket.getInputStream(), "UTF-8"));
-            out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), "UTF-8"), true);
+            InputStream socketInput = socket.getInputStream();
+            in = new MessageFrameReader(socketInput);
+            out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
 
             System.out.println("[ClientHandler] New connection: " + clientId);
 
             String line;
-            while ((line = in.readLine()) != null) {
-                if (line.isBlank()) continue;
+            while (true) {
+                try {
+                    line = in.readFrame();
+                } catch (MessageFrameReader.InvalidUtf8Exception e) {
+                    sendError("Invalid UTF-8 message");
+                    continue;
+                }
+                if (line == null) {
+                    break;
+                }
 
                 try {
                     Message msg = Message.fromJson(line);
+                    msg.validateClientInput();
                     handleMessage(msg);
                 } catch (Exception e) {
-                    System.err.println("[ClientHandler] Bad message from " + clientId + ": " + e.getMessage());
-                    sendError("Invalid message format: " + e.getMessage());
+                    System.err.println("[ClientHandler] Rejected malformed message from " + clientId
+                            + " (" + e.getClass().getSimpleName() + ")");
+                    sendError("Invalid message");
                 }
             }
+        } catch (MessageFrameReader.MessageTooLargeException e) {
+            sendError("Message exceeds the TCP frame limit");
+        } catch (MessageFrameReader.IncompleteMessageException e) {
+            sendError("Incomplete TCP message");
         } catch (IOException e) {
-            System.out.println("[ClientHandler] Disconnected: " + clientId + " — " + e.getMessage());
+            System.out.println("[ClientHandler] Disconnected: " + clientId + " (" + e.getClass().getSimpleName() + ")");
         } finally {
             disconnect();
         }
     }
 
-    private void handleMessage(Message msg) throws Exception {
+    private void handleMessage(Message msg) {
         Message.Type type = Message.Type.fromString(msg.getType());
         if (type == null) {
-            sendError("Unknown message type: " + msg.getType());
+            sendError("Unsupported message type");
             return;
         }
 
@@ -82,8 +97,8 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    private void handleHello(Message msg) throws Exception {
-        // Expected payload: { "user_id": 123, "token": "jwt-or-reference" }
+    private void handleHello(Message msg) {
+        // Legacy handshake looks up user_id in SQLite; it does not verify caller ownership.
         var payload = msg.getPayload();
         if (payload == null || !payload.containsKey("user_id")) {
             sendError("CLIENT_HELLO requires 'user_id' in payload");
@@ -134,7 +149,7 @@ public class ClientHandler implements Runnable {
     }
 
     /** Sends a message to this client. */
-    public void send(Message msg) {
+    public synchronized void send(Message msg) {
         try {
             out.println(msg.toJson());
         } catch (Exception e) {

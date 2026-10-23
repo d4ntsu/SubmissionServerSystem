@@ -6,7 +6,8 @@ import logging
 from app.core.config import settings
 from app.database import Base, engine
 from app.models import *  # noqa: F401,F403 - register all models for metadata
-from app.api import auth, exams, questions, test_cases, submissions, results
+from app.api import auth, exams, questions, test_cases, submissions, results, realtime
+from app.realtime.manager import realtime_manager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="LAN Programming Exam System", version="0.1.0")
+app.state.realtime_manager = realtime_manager
 
 origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
 app.add_middleware(
@@ -30,6 +32,7 @@ app.include_router(questions.router)
 app.include_router(test_cases.router)
 app.include_router(submissions.router)
 app.include_router(results.router)
+app.include_router(realtime.router)
 
 _worker_stop_event: asyncio.Event | None = None
 _worker_task: asyncio.Task | None = None
@@ -56,6 +59,7 @@ async def stop_grading_worker():
             await _worker_task
         except asyncio.CancelledError:
             pass
+    await app.state.realtime_manager.shutdown()
     logger.info("Grading worker stopped")
 
 
