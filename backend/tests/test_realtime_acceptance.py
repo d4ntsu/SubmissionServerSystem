@@ -18,6 +18,16 @@ def acceptance_client(monkeypatch):
     monkeypatch.setattr(grading_worker, "_recover_stuck_submissions", lambda: None)
     monkeypatch.setattr(grading_worker, "_claim_next_submission", lambda: None)
     with TestClient(app) as test_client:
+        class InProcessJavaBridge:
+            async def send(self, event):
+                db = SessionLocal()
+                try:
+                    await app.state.realtime_manager.publish_bridge_event(event, db)
+                finally:
+                    db.close()
+                return True
+
+        monkeypatch.setattr(app.state, "realtime_bridge", InProcessJavaBridge())
         yield test_client
 
 
@@ -73,6 +83,15 @@ def test_complete_realtime_acceptance_workflow(acceptance_client):
         )
         assert created_exam.status_code == 201, created_exam.text
         exam_id = created_exam.json()["id"]
+        published = client.put(
+            f"/exams/{exam_id}",
+            headers=teacher_headers,
+            json={"status": "published"},
+        )
+        assert published.status_code == 200
+        assert client.post(
+            f"/exams/{exam_id}/join", headers=student_headers
+        ).status_code == 204
 
         denied = client.put(
             f"/exams/{exam_id}",
@@ -175,6 +194,18 @@ def test_five_browser_clients_receive_exam_events_and_heartbeat(acceptance_clien
         )
         assert created_exam.status_code == 201, created_exam.text
         exam_id = created_exam.json()["id"]
+        published = client.put(
+            f"/exams/{exam_id}",
+            headers=teacher_headers,
+            json={"status": "published"},
+        )
+        assert published.status_code == 200
+        for token in student_tokens:
+            joined = client.post(
+                f"/exams/{exam_id}/join",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert joined.status_code == 204
 
         with ExitStack() as sockets_context:
             sockets = [

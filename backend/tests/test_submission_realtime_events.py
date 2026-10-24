@@ -3,6 +3,8 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session as SQLAlchemySession
 
 from app.database import SessionLocal
 from app.models.exam import Exam, ExamStatus
@@ -191,15 +193,19 @@ def test_received_event_is_emitted_after_submission_commit_and_kept_private(
     question_id = None
     captured = []
 
-    async def capture_bridge_event(event, event_db):
-        submission = event_db.get(Submission, event["payload"]["submission_id"])
-        assert submission is not None
-        assert submission.status == SubmissionStatus.queued
-        assert set(event["payload"]) == {"submission_id"}
+    async def capture_tcp_event(event):
+        event_db = SessionLocal()
+        try:
+            submission = event_db.get(Submission, event["payload"]["submission_id"])
+            assert submission is not None
+            assert submission.status == SubmissionStatus.queued
+            assert set(event["payload"]) == {"submission_id"}
+        finally:
+            event_db.close()
         captured.append(event.copy())
-        return 0
+        return True
 
-    monkeypatch.setattr(submission_events, "publish_bridge_event", capture_bridge_event)
+    monkeypatch.setattr(submission_events, "_event_sender", capture_tcp_event)
     try:
         exam = Exam(
             title=f"Received event exam {suffix}",
@@ -285,7 +291,66 @@ def test_received_event_is_emitted_after_submission_commit_and_kept_private(
         db.close()
 
 
-def test_worker_emits_running_only_after_claim_commit(submission_context, monkeypatch):
+def test_received_event_is_not_sent_when_submission_commit_fails(
+    client, submission_context, monkeypatch
+):
+    username = f"commit_failure_{uuid.uuid4().hex}"
+    registered = client.post(
+        "/auth/register",
+        json={
+            "username": username,
+            "password": "submission-event-pass",
+            "full_name": "Commit Failure Student",
+            "role": "student",
+        },
+    )
+    assert registered.status_code == 201, registered.text
+    login = client.post(
+        "/auth/login",
+        json={"username": username, "password": "submission-event-pass"},
+    )
+    assert login.status_code == 200, login.text
+    events = []
+
+    async def capture_tcp_event(event):
+        events.append(event)
+        return True
+
+    monkeypatch.setattr(submission_events, "_event_sender", capture_tcp_event)
+
+    original_commit = SQLAlchemySession.commit
+
+    def fail_submission_commit(db):
+        if any(isinstance(item, Submission) for item in db.new):
+            raise SQLAlchemyError("simulated submission commit failure")
+        return original_commit(db)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(SQLAlchemySession, "commit", fail_submission_commit)
+        with pytest.raises(SQLAlchemyError, match="simulated submission commit failure"):
+            client.post(
+                "/submissions",
+                headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+                json={
+                    "question_id": submission_context["question_id"],
+                    "language": "java",
+                    "source_code": "class Main {}",
+                },
+            )
+
+    assert events == []
+    profile = client.get(
+        "/auth/me", headers={"Authorization": f"Bearer {login.json()['access_token']}"}
+    )
+    assert profile.status_code == 200
+    db = SessionLocal()
+    try:
+        assert db.query(Submission).filter(Submission.student_id == profile.json()["id"]).count() == 0
+    finally:
+        db.close()
+
+
+def test_worker_emits_running_status_only_after_claim_commit(submission_context, monkeypatch):
     from app.workers import grading_worker
 
     submission_id = submission_context["add_submission"]()
@@ -302,23 +367,30 @@ def test_worker_emits_running_only_after_claim_commit(submission_context, monkey
         finally:
             db.close()
 
-    async def capture_event(event_type, actual_id):
+    async def capture_tcp_event(event):
         db = SessionLocal()
         try:
-            observed.append((event_type, actual_id, db.get(Submission, actual_id).status))
+            submission = db.get(Submission, event["payload"]["submission_id"])
+            observed.append((event.copy(), submission.status))
         finally:
             db.close()
+        return True
 
     async def finish_grading(_submission_id):
         stop_event.set()
 
     monkeypatch.setattr(grading_worker, "_recover_stuck_submissions", lambda: None)
     monkeypatch.setattr(grading_worker, "_claim_next_submission", claim_submission)
-    monkeypatch.setattr(grading_worker, "publish_submission_event", capture_event)
+    monkeypatch.setattr(submission_events, "_event_sender", capture_tcp_event)
     monkeypatch.setattr(grading_worker, "grade_submission", finish_grading)
     asyncio.run(grading_worker.run_grading_worker(stop_event))
 
-    assert observed == [("submission.running", submission_id, SubmissionStatus.running)]
+    assert len(observed) == 2
+    for event, state_at_delivery in observed:
+        assert event["type"] == "submission.status"
+        assert event["payload"] == {"submission_id": submission_id, "status": "running"}
+        assert event["recipient"] in {"role:student", "role:teacher"}
+        assert state_at_delivery == SubmissionStatus.running
 
 
 def test_completed_event_has_safe_payload_and_realtime_failure_keeps_commit(
@@ -344,27 +416,30 @@ def test_completed_event_has_safe_payload_and_realtime_failure_keeps_commit(
                 run=SimpleNamespace(stdout="accepted", stderr="", code=0),
             )
 
-    async def fail_delivery(event, db):
+    async def fail_delivery(event):
+        db = SessionLocal()
         submission = db.get(Submission, submission_id)
         observed.append((event.copy(), submission.status))
+        db.close()
         raise RuntimeError("simulated socket outage")
 
     monkeypatch.setattr(grading_service, "PistonClient", FakeExecutor)
-    monkeypatch.setattr(submission_events, "publish_bridge_event", fail_delivery)
+    monkeypatch.setattr(submission_events, "_event_sender", fail_delivery)
     asyncio.run(grading_service.grade_submission(submission_id))
 
     db = SessionLocal()
     try:
         persisted = db.get(Submission, submission_id)
         assert persisted.status == SubmissionStatus.completed
-        assert len(observed) == 1
-        event, state_at_delivery = observed[0]
-        assert event["type"] == "submission.completed"
-        assert event["payload"] == {"submission_id": submission_id}
-        assert state_at_delivery == SubmissionStatus.completed
-        assert "source_code" not in event["payload"]
-        assert "score" not in event["payload"]
-        assert "Piston" not in str(event)
+        assert len(observed) == 2
+        for event, state_at_delivery in observed:
+            assert event["type"] == "submission.completed"
+            assert event["payload"] == {"submission_id": submission_id}
+            assert event["recipient"] in {"role:student", "role:teacher"}
+            assert state_at_delivery == SubmissionStatus.completed
+            assert "source_code" not in event["payload"]
+            assert "score" not in event["payload"]
+            assert "Piston" not in str(event)
     finally:
         db.close()
 
@@ -389,12 +464,16 @@ def test_failed_event_is_normalized_and_omits_executor_details(submission_contex
 
             raise PistonClientError("private Piston and Docker diagnostics")
 
-    async def capture_bridge_event(event, db):
-        observed.append((event.copy(), db.get(Submission, submission_id).status))
-        return 0
+    async def capture_tcp_event(event):
+        db = SessionLocal()
+        try:
+            observed.append((event.copy(), db.get(Submission, submission_id).status))
+        finally:
+            db.close()
+        return True
 
     monkeypatch.setattr(grading_service, "PistonClient", FailingExecutor)
-    monkeypatch.setattr(submission_events, "publish_bridge_event", capture_bridge_event)
+    monkeypatch.setattr(submission_events, "_event_sender", capture_tcp_event)
     asyncio.run(grading_service.grade_submission(submission_id))
 
     db = SessionLocal()
@@ -404,7 +483,7 @@ def test_failed_event_is_normalized_and_omits_executor_details(submission_contex
         assert "private Piston and Docker diagnostics" in persisted.error_summary
         assert len(observed) == 2
         for event, state_at_delivery in observed:
-            assert event["type"] == "submission.failed"
+            assert event["type"] == "submission.error"
             assert event["payload"] == {"submission_id": submission_id}
             assert state_at_delivery == SubmissionStatus.error
             assert "Piston" not in str(event)

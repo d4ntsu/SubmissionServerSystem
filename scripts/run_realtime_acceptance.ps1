@@ -33,7 +33,7 @@ $javaExitCode = 1
 try {
     $env:DATABASE_URL = "sqlite:///./data/$databaseName"
 
-    Write-Host "Running all FastAPI tests, including the realtime acceptance workflow..."
+    Write-Host "Running FastAPI tests, including live Browser-to-Java TCP realtime acceptance..."
     Push-Location $backendDirectory
     try {
         & $pythonExecutable -m pytest -q tests -p no:cacheprovider
@@ -79,4 +79,4 @@ if ($backendExitCode -ne 0 -or $javaExitCode -ne 0) {
     exit 1
 }
 
-Write-Host "All current component suites passed. This does not verify FastAPI-to-Java TCP forwarding; no TCP client exists in the current backend."
+Write-Host "All FastAPI tests, live realtime E2E acceptance, and Java TCP tests passed."

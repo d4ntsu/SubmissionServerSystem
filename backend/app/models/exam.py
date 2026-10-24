@@ -28,3 +28,13 @@ class Exam(Base):
 
     teacher = relationship("User")
     questions = relationship("Question", back_populates="exam", cascade="all, delete-orphan")
+
+
+class ExamParticipant(Base):
+    """A student who explicitly joined an exam and may receive its realtime events."""
+
+    __tablename__ = "exam_participants"
+
+    exam_id = Column(Integer, ForeignKey("exams.id", ondelete="CASCADE"), primary_key=True)
+    student_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    joined_at = Column(DateTime, server_default=func.now(), nullable=False)

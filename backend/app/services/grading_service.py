@@ -157,4 +157,4 @@ async def _fail_submission(db: Session, submission: Submission, message: str) ->
         db.rollback()
         logger.exception("Failed to persist error status for submission %d", submission.id)
         return
-    await publish_submission_event("submission.failed", submission.id)
+    await publish_submission_event("submission.error", submission.id)

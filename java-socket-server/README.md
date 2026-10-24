@@ -47,8 +47,10 @@ Edit `src/main/resources/server.properties` or set environment variables:
 | `server.port` | `SOCKET_PORT` | `9000` | TCP port |
 | `database.path` | `DATABASE_PATH` | `../backend/app/data/exam_system.db` | SQLite DB path |
 | `auth.shared_secret` | `SOCKET_SERVER_SHARED_SECRET` or `SHARED_SECRET` | empty | Shared secret for FastAPI service authentication; set the same value in the backend `.env` and Java server environment |
+| `auth.jwt_secret` | `SECRET_KEY` | empty | Must match the FastAPI `SECRET_KEY`; verifies user access JWTs. Java accepts HS256 only. Set this through the environment or local `server.properties`, never commit a real secret. |
+| `auth.jwt_algorithm` | `JWT_ALGORITHM` | `HS256` | JWT algorithm; Java user authentication currently supports HS256 only |
 
-The FastAPI bridge remains disabled until `SOCKET_SERVER_SHARED_SECRET` is configured. The Java server rejects `service.hello` if its secret is empty. Keep both services on a trusted internal network; the TCP connection does not add TLS.
+The FastAPI bridge remains disabled until `SOCKET_SERVER_SHARED_SECRET` is configured. User JWT authentication also remains disabled until Java receives the backend `SECRET_KEY`. Keep both services on a trusted internal network; the TCP connection does not add TLS.
 
 ## Message Protocol
 
@@ -76,16 +78,18 @@ submission.received, submission.running, submission.completed, submission.failed
 server.error
 ```
 
-Payloads use event-specific allowlists. Submission events carry `submission_id`; exam start/end carry `exam_id`; announcements carry `exam_id` and `message`. Sensitive fields such as passwords, tokens, source code, hidden tests, expected outputs, grades, and scores are rejected.
+Payloads use event-specific allowlists. Submission events carry `submission_id`; exam start/end carry `exam_id`; announcements carry `exam_id` and `message`. Passwords, credentials in domain events, source code, hidden tests, expected outputs, grades, and scores are rejected. The backend access token is accepted only in the `auth` credential message.
 
 ### Client to Server
 
 ```
-{"type":"client.hello","requestId":"550e8400-e29b-41d4-a716-446655440000","sender":"client:127.0.0.1","recipient":"server","timestamp":"2026-10-22T10:00:00Z","payload":{"user_id":42}}
+{"type":"auth","event_id":"550e8400-e29b-41d4-a716-446655440000","sender":"client:127.0.0.1","recipient":"server","timestamp":"2026-10-22T10:00:00Z","payload":{"access_token":"<backend-issued-access-token>"}}
 {"type":"client.heartbeat","requestId":"550e8400-e29b-41d4-a716-446655440000","sender":"client:127.0.0.1","recipient":"server","timestamp":"2026-10-22T10:00:00Z","payload":{}}
 ```
 
-After the service handshake succeeds, FastAPI sends newline-delimited normalized event envelopes. Java routes them by `recipient` (for example `broadcast`, `student:<id>`, or `role:<name>`). Routed messages received by the service connection are dispatched to FastAPI's `RealtimeEventRouter`.
+FastAPI authenticates with the existing HMAC challenge-response. A direct Java user client authenticates with an `auth` message containing its backend `access_token`; Java verifies the HS256 signature and expiry, then reads the current role from SQLite. The legacy `client.hello` message does not authenticate a user. User clients may subscribe only to published/started exams visible to students, or exams owned by the teacher.
+
+After the service handshake succeeds, FastAPI sends newline-delimited normalized event envelopes. Java routes them by `recipient` (`broadcast`, `user:<id>`, `student:<id>`, `role:<name>`, `exam:<id>`, or `session:<connection-id>`). Exam delivery goes only to authorized subscribed sessions. Submission events are rejected when they target broad recipients. Routed messages received by the service connection are dispatched to FastAPI's `RealtimeEventRouter`.
 
 ### Server to Client
 
@@ -94,7 +98,7 @@ After the service handshake succeeds, FastAPI sends newline-delimited normalized
 {"type":"submission.running","requestId":"550e8400-e29b-41d4-a716-446655440000","sender":"fastapi","recipient":"student:42","timestamp":"2026-10-22T10:00:00Z","payload":{"submission_id":123}}
 ```
 
-The existing `client.hello` handler still looks up the supplied `user_id` in SQLite and treats a match as authenticated. That lookup does not prove the caller owns the account; token or service authentication remains a separate required security improvement.
+The `user_id` and `role` in a user JWT are not used as authorization data. Java trusts only a valid signature and user ID from the JWT, and loads the current user role from SQLite. Tokens are never written to logs. Since this TCP service does not provide TLS, direct user JWT authentication must be used only on the trusted internal network; browser clients should continue to connect through FastAPI WebSocket.
 
 ## Testing
 

@@ -20,6 +20,21 @@ import java.util.logging.Logger;
  */
 public final class ClientRegistry {
 
+    @FunctionalInterface
+    public interface UserLookup {
+        Optional<UserInfo> findById(int userId);
+    }
+
+    @FunctionalInterface
+    public interface ExamAccess {
+        boolean canAccess(int userId, String role, int examId);
+    }
+
+    @FunctionalInterface
+    public interface SubmissionLookup {
+        Optional<SubmissionRecipients> findRecipients(int submissionId);
+    }
+
     private static final Logger LOGGER = Logger.getLogger(ClientRegistry.class.getName());
 
     /** Maps clientId → ClientHandler for active TCP connections */
@@ -30,6 +45,24 @@ public final class ClientRegistry {
 
     /** Maps clientId → userId */
     private final Map<String, Integer> clientToUser = new ConcurrentHashMap<>();
+    private final UserLookup userLookup;
+    private final ExamAccess examAccess;
+    private final SubmissionLookup submissionLookup;
+
+    public ClientRegistry() {
+        this(null, null);
+    }
+
+    ClientRegistry(UserLookup userLookup, ExamAccess examAccess) {
+        this(userLookup, examAccess, null);
+    }
+
+    ClientRegistry(UserLookup userLookup, ExamAccess examAccess, SubmissionLookup submissionLookup) {
+        this.userLookup = userLookup == null ? this::findUserByIdFromDatabase : userLookup;
+        this.examAccess = examAccess == null ? this::canAccessExamFromDatabase : examAccess;
+        this.submissionLookup = submissionLookup == null
+                ? this::findSubmissionRecipientsFromDatabase : submissionLookup;
+    }
 
     // --- User validation via JDBC ---
 
@@ -38,6 +71,13 @@ public final class ClientRegistry {
      * Used during socket connection authentication.
      */
     public Optional<UserInfo> findUserById(int userId) {
+        if (userId <= 0) {
+            return Optional.empty();
+        }
+        return userLookup.findById(userId);
+    }
+
+    private Optional<UserInfo> findUserByIdFromDatabase(int userId) {
         String sql = "SELECT id, username, full_name, role FROM users WHERE id = ?";
         try (Connection conn = DatabaseConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
@@ -54,6 +94,58 @@ public final class ClientRegistry {
             }
         } catch (SQLException e) {
             LOGGER.log(Level.WARNING, "User lookup failed: {0}", e.getClass().getSimpleName());
+        }
+        return Optional.empty();
+    }
+
+    /** The database role is authoritative; JWT role claims are not used for routing. */
+    public boolean canAccessExam(int userId, String role, int examId) {
+        return userId > 0 && examId > 0 && examAccess.canAccess(userId, role, examId);
+    }
+
+    private boolean canAccessExamFromDatabase(int userId, String role, int examId) {
+        String sql = "SELECT 1 FROM exams WHERE id = ? AND "
+                + "((? = 'teacher' AND teacher_id = ?) "
+                + "OR (? = 'student' AND status IN ('published', 'started')))";
+        try (Connection conn = DatabaseConnection.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, examId);
+            stmt.setString(2, role);
+            stmt.setInt(3, userId);
+            stmt.setString(4, role);
+            try (ResultSet rs = stmt.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            LOGGER.log(Level.WARNING, "Exam access check failed: {0}", e.getClass().getSimpleName());
+            return false;
+        }
+    }
+
+    /** Resolves private submission recipients from canonical ownership relations. */
+    public Optional<SubmissionRecipients> findSubmissionRecipients(int submissionId) {
+        if (submissionId <= 0) {
+            return Optional.empty();
+        }
+        return submissionLookup.findRecipients(submissionId);
+    }
+
+    private Optional<SubmissionRecipients> findSubmissionRecipientsFromDatabase(int submissionId) {
+        String sql = "SELECT s.student_id, e.teacher_id FROM submissions s "
+                + "JOIN questions q ON q.id = s.question_id "
+                + "JOIN exams e ON e.id = q.exam_id WHERE s.id = ?";
+        try (Connection conn = DatabaseConnection.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, submissionId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return Optional.of(new SubmissionRecipients(
+                            rs.getInt("student_id"), rs.getInt("teacher_id")
+                    ));
+                }
+            }
+        } catch (SQLException e) {
+            LOGGER.log(Level.WARNING, "Submission recipient lookup failed: {0}", e.getClass().getSimpleName());
         }
         return Optional.empty();
     }
@@ -180,13 +272,28 @@ public final class ClientRegistry {
         }
     }
 
-    public void removeClient(String clientId) {
+    public synchronized void removeClient(String clientId) {
         onlineClients.remove(clientId);
         Integer userId = clientToUser.remove(clientId);
         if (userId != null) {
-            userToClient.remove(userId);
+            removeClientFromUser(clientId, userId);
+        }
+    }
+
+    private void removeClientFromUser(String clientId, int userId) {
+        Set<String> clients = userToClients.get(userId);
+        if (clients == null) {
+            return;
+        }
+        clients.remove(clientId);
+        clientToUser.remove(clientId, userId);
+        if (clients.isEmpty() && userToClients.remove(userId, clients)) {
             markOffline(userId);
         }
+    }
+
+    public void unregisterClient(String clientId) {
+        removeClient(clientId);
     }
 
     public ClientHandler getHandlerByUserId(int userId) {
@@ -206,6 +313,23 @@ public final class ClientRegistry {
             }
         }
         return handlers;
+    }
+
+    public List<ClientHandler> getHandlersByRole(String role) {
+        if (role == null || role.isBlank()) {
+            return List.of();
+        }
+        return getAllClients().values().stream()
+                .filter(ClientHandler::isAuthenticated)
+                .filter(handler -> role.equals(handler.getRole()))
+                .toList();
+    }
+
+    public List<ClientHandler> getHandlersByExam(int examId) {
+        return getAllClients().values().stream()
+                .filter(ClientHandler::isAuthenticated)
+                .filter(handler -> handler.isSubscribedToExam(examId))
+                .toList();
     }
 
     public ClientHandler getHandlerByClientId(String clientId) {
@@ -228,21 +352,22 @@ public final class ClientRegistry {
 
     public void sendTo(String clientId, Message message) {
         ClientHandler handler = onlineClients.get(clientId);
-        if (handler != null) {
+        if (handler != null && handler.isAuthenticated()) {
             handler.sendMessage(message);
         }
     }
 
     public void sendToUser(int userId, Message message) {
-        ClientHandler handler = getHandlerByUserId(userId);
-        if (handler != null) {
+        for (ClientHandler handler : getHandlersByUserId(userId)) {
             handler.sendMessage(message);
         }
     }
 
     public void broadcast(Message message) {
         for (ClientHandler handler : getAllClients().values()) {
-            handler.sendMessage(message);
+            if (handler.isAuthenticated()) {
+                handler.sendMessage(message);
+            }
         }
     }
 
@@ -258,15 +383,11 @@ public final class ClientRegistry {
     }
 
     public boolean isUserOnline(int userId) {
-        return userToClient.containsKey(userId);
+        return userToClients.containsKey(userId);
     }
-
-        /** Returns all currently-connected client handlers (for broadcasting / iteration). */
-        public Map<String, ClientHandler> getOnlineClients() {
-            return onlineClients;
-        }
 
     // --- Data class ---
 
     public record UserInfo(int id, String username, String fullName, String role) {}
+    public record SubmissionRecipients(int studentId, int teacherId) {}
 }

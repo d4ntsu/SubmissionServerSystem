@@ -2,6 +2,7 @@ package com.exam.realtime;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -26,6 +27,11 @@ public class Message {
             "(?:[A-Za-z][A-Za-z0-9._:-]{0,127}|client:[A-Za-z0-9._:/\\[\\]%+-]{1,120})"
     );
     private static final Pattern STUDENT_RECIPIENT_PATTERN = Pattern.compile("student:[1-9][0-9]{0,9}");
+    private static final Pattern USER_RECIPIENT_PATTERN = Pattern.compile("user:[1-9][0-9]{0,9}");
+    private static final Pattern EXAM_RECIPIENT_PATTERN = Pattern.compile("exam:[1-9][0-9]{0,9}");
+    private static final Pattern SESSION_RECIPIENT_PATTERN = Pattern.compile(
+            "session:[A-Za-z0-9._:/\\[\\]%+-]{1,120}"
+    );
     private static final Pattern ROLE_RECIPIENT_PATTERN = Pattern.compile("role:(?:student|teacher|service)");
     private static final Pattern CLIENT_RECIPIENT_PATTERN = Pattern.compile(
             "client:[A-Za-z0-9._:/\\[\\]%+-]{1,120}"
@@ -47,6 +53,11 @@ public class Message {
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
 
     public enum Type {
+        AUTH("auth"),
+        PING("ping"),
+        PONG("pong"),
+        SUBSCRIBE("subscribe"),
+        UNSUBSCRIBE("unsubscribe"),
         // Client → Server
         CLIENT_HELLO("client.hello"),
         CLIENT_HEARTBEAT("client.heartbeat"),
@@ -56,8 +67,11 @@ public class Message {
         EXAM_ANNOUNCEMENT("exam.announcement"),
         SUBMISSION_RECEIVED("submission.received"),
         SUBMISSION_RUNNING("submission.running"),
+        SUBMISSION_STATUS("submission.status"),
         SUBMISSION_COMPLETED("submission.completed"),
         SUBMISSION_FAILED("submission.failed"),
+        SUBMISSION_ERROR("submission.error"),
+        ANNOUNCEMENT_CREATED("announcement.created"),
         SERVER_ERROR("server.error");
 
         private final String value;
@@ -109,8 +123,10 @@ public class Message {
 
     /** Parses one JSON message and validates its envelope and event payload. */
     public static Message fromJson(String json) throws JsonProcessingException {
-        if (json == null || json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
-                > MessageFrameReader.MAX_MESSAGE_BYTES) {
+        if (json == null || json.isBlank()) {
+            throw new ValidationException("Message must not be empty");
+        }
+        if (json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > MessageFrameReader.MAX_MESSAGE_BYTES) {
             throw new ValidationException("Message exceeds the configured size limit");
         }
         Message message = MAPPER.readValue(json, Message.class);
@@ -121,7 +137,7 @@ public class Message {
         return message;
     }
 
-    /** Serializes a validated message to one JSON line without the line delimiter. */
+    /** Serializes a validated message to JSON without the line delimiter. */
     public String toJson() throws JsonProcessingException {
         validate();
         byte[] json = MAPPER.writeValueAsBytes(this);
@@ -129,6 +145,11 @@ public class Message {
             throw new ValidationException("Message exceeds the configured size limit");
         }
         return new String(json, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /** Serializes a validated message as one newline-delimited UTF-8 JSON frame. */
+    public String toJsonLine() throws JsonProcessingException {
+        return toJson() + "\n";
     }
 
     /** Applies checks specific to messages received from a TCP peer. */
@@ -187,12 +208,10 @@ public class Message {
             throw new ValidationException("timestamp must be an ISO-8601 date-time with an offset");
         }
 
-        if (payload == null && parsedType != Type.CLIENT_HEARTBEAT) {
+        if (payload == null) {
             throw new ValidationException("payload is required for this message type");
         }
-        if (payload != null) {
-            validatePayload(parsedType);
-        }
+        validatePayload(parsedType);
     }
 
     private void validatePayload(Type parsedType) {
@@ -203,7 +222,8 @@ public class Message {
             if (key == null || !allowedKeys.contains(key)) {
                 throw new ValidationException("Unexpected payload field");
             }
-            if (FORBIDDEN_PAYLOAD_KEYS.contains(normalizeKey(key))) {
+            boolean authCredential = parsedType == Type.AUTH && "access_token".equals(key);
+            if (FORBIDDEN_PAYLOAD_KEYS.contains(normalizeKey(key)) && !authCredential) {
                 throw new ValidationException("Payload contains a prohibited field");
             }
             if (value instanceof Map<?, ?> || value instanceof Iterable<?>) {
@@ -215,6 +235,26 @@ public class Message {
         }
 
         switch (parsedType) {
+            case AUTH -> {
+                boolean hasChallenge = payload.containsKey("challenge");
+                boolean hasProof = payload.containsKey("proof");
+                boolean hasAccessToken = payload.containsKey("access_token");
+                int credentialCount = (hasChallenge ? 1 : 0) + (hasProof ? 1 : 0) + (hasAccessToken ? 1 : 0);
+                if (credentialCount > 1 || (credentialCount == 0 && !payload.isEmpty())) {
+                    throw new ValidationException("auth payload must contain one supported credential");
+                }
+                if (hasChallenge) {
+                    validateHexValue("challenge");
+                }
+                if (hasProof) {
+                    validateHexValue("proof");
+                }
+                if (hasAccessToken) {
+                    requireNonBlankString("access_token", 4096);
+                }
+            }
+            case PING, PONG -> validateOptionalTimestamp("sent_at");
+            case SUBSCRIBE, UNSUBSCRIBE -> requireNonBlankString("channel", 128);
             case CLIENT_HELLO -> requirePositiveInteger("user_id", Integer.MAX_VALUE);
             case CLIENT_HEARTBEAT -> validateOptionalBoolean("alive");
             case CLIENT_STATUS -> {
@@ -222,6 +262,7 @@ public class Message {
                     throw new ValidationException("client.status payload must not be empty");
                 }
                 validateOptionalBoolean("authenticated");
+                validateOptionalBoolean("service");
                 validateOptionalBoolean("is_online");
                 validateOptionalInteger("user_id", 1, Integer.MAX_VALUE);
                 validateOptionalInteger("online_count", 0, Integer.MAX_VALUE);
@@ -241,9 +282,27 @@ public class Message {
                 requireNonBlankString("message", 4000);
                 validateOptionalTimestamp("created_at");
             }
+            case ANNOUNCEMENT_CREATED -> {
+                requirePositiveInteger("exam_id");
+                validateOptionalInteger("announcement_id", 1, Long.MAX_VALUE);
+                requireNonBlankString("message", 4000);
+                validateOptionalTimestamp("created_at");
+            }
             case SUBMISSION_RECEIVED, SUBMISSION_RUNNING, SUBMISSION_COMPLETED ->
                     requirePositiveInteger("submission_id");
+            case SUBMISSION_STATUS -> {
+                requirePositiveInteger("submission_id");
+                Object status = payload.get("status");
+                if (!(status instanceof String value)
+                        || !Set.of("queued", "running", "completed", "error").contains(value)) {
+                    throw new ValidationException("status must be a supported submission state");
+                }
+            }
             case SUBMISSION_FAILED -> {
+                requirePositiveInteger("submission_id");
+                validateOptionalCode("error_code");
+            }
+            case SUBMISSION_ERROR -> {
                 requirePositiveInteger("submission_id");
                 validateOptionalCode("error_code");
             }
@@ -256,14 +315,20 @@ public class Message {
 
     private static Set<String> allowedPayloadKeys(Type type) {
         return switch (type) {
+            case AUTH -> Set.of("challenge", "proof", "access_token");
+            case PING, PONG -> Set.of("sent_at");
+            case SUBSCRIBE, UNSUBSCRIBE -> Set.of("channel");
             case CLIENT_HELLO -> Set.of("user_id");
             case CLIENT_HEARTBEAT -> Set.of("alive");
             case CLIENT_STATUS -> Set.of("authenticated", "user_id", "username", "role", "online_count",
-                    "status", "is_online");
+                    "status", "is_online", "service");
             case EXAM_STARTED, EXAM_ENDED -> Set.of("exam_id", "title", "start_time", "end_time");
             case EXAM_ANNOUNCEMENT -> Set.of("exam_id", "announcement_id", "message", "created_at");
+            case ANNOUNCEMENT_CREATED -> Set.of("exam_id", "announcement_id", "message", "created_at");
             case SUBMISSION_RECEIVED, SUBMISSION_RUNNING, SUBMISSION_COMPLETED -> Set.of("submission_id");
+            case SUBMISSION_STATUS -> Set.of("submission_id", "status");
             case SUBMISSION_FAILED -> Set.of("submission_id", "error_code");
+            case SUBMISSION_ERROR -> Set.of("submission_id", "error_code");
             case SERVER_ERROR -> Set.of("error", "code");
         };
     }
@@ -344,6 +409,12 @@ public class Message {
         }
     }
 
+    private void validateHexValue(String key) {
+        if (!(payload.get(key) instanceof String value) || !value.matches("[0-9a-f]{64}")) {
+            throw new ValidationException(key + " must be a 64-character lowercase hexadecimal value");
+        }
+    }
+
     private static boolean isCanonicalUuid(String value) {
         try {
             return UUID.fromString(value).toString().equalsIgnoreCase(value);
@@ -359,6 +430,17 @@ public class Message {
         if (STUDENT_RECIPIENT_PATTERN.matcher(recipient).matches()) {
             try {
                 return Integer.parseInt(recipient.substring("student:".length())) > 0;
+            } catch (NumberFormatException e) {
+                return false;
+            }
+        }
+        if (SESSION_RECIPIENT_PATTERN.matcher(recipient).matches()) {
+            return true;
+        }
+        if (USER_RECIPIENT_PATTERN.matcher(recipient).matches()
+                || EXAM_RECIPIENT_PATTERN.matcher(recipient).matches()) {
+            try {
+                return Integer.parseInt(recipient.substring(recipient.indexOf(':') + 1)) > 0;
             } catch (NumberFormatException e) {
                 return false;
             }
@@ -383,11 +465,13 @@ public class Message {
     public String getType() { return type; }
     public void setType(String type) { this.type = type; }
 
+    @JsonProperty("event_id")
     public String getRequestId() { return requestId; }
-    @JsonAlias("request_id")
+    @JsonProperty("event_id")
+    @JsonAlias({"requestId", "request_id"})
     public void setRequestId(String requestId) {
-        if (this.requestId != null && !this.requestId.equals(requestId)) {
-            throw new ValidationException("requestId must not be specified more than once");
+        if (this.requestId != null) {
+            throw new ValidationException("event_id must not be specified more than once");
         }
         this.requestId = requestId;
     }

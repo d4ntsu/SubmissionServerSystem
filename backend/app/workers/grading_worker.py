@@ -25,7 +25,9 @@ async def run_grading_worker(stop_event: asyncio.Event) -> None:
     while not stop_event.is_set():
         submission_id = _claim_next_submission()
         if submission_id is not None:
-            await publish_submission_event("submission.running", submission_id)
+            await publish_submission_event(
+                "submission.status", submission_id, status=SubmissionStatus.running.value
+            )
             try:
                 await grade_submission(submission_id)
             except Exception:

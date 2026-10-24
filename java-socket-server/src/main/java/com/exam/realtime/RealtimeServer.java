@@ -28,6 +28,8 @@ public class RealtimeServer {
     private final String host;
     private final int port;
     private final String sharedSecret;
+    private final String jwtSecret;
+    private final String jwtAlgorithm;
     private final Object lifecycleLock = new Object();
     private final AtomicBoolean started = new AtomicBoolean();
     private final AtomicBoolean shutdown = new AtomicBoolean();
@@ -36,16 +38,29 @@ public class RealtimeServer {
     private volatile boolean running;
 
     public RealtimeServer() {
-        this(Config.getHost(), Config.getPort(), Config.getSharedSecret());
+        this(Config.getHost(), Config.getPort(), Config.getSharedSecret(), Config.getJwtSecret(),
+                Config.getJwtAlgorithm(), new ClientRegistry());
     }
 
     /** Constructor with a configurable port, including port 0 for integration tests. */
     public RealtimeServer(String host, int port) {
-        this(host, port, Config.getSharedSecret());
+        this(host, port, Config.getSharedSecret(), Config.getJwtSecret(),
+                Config.getJwtAlgorithm(), new ClientRegistry());
     }
 
     /** Constructor with explicit service credentials, primarily for isolated tests. */
     public RealtimeServer(String host, int port, String sharedSecret) {
+        this(host, port, sharedSecret, Config.getJwtSecret(), Config.getJwtAlgorithm(), new ClientRegistry());
+    }
+
+    RealtimeServer(
+            String host,
+            int port,
+            String sharedSecret,
+            String jwtSecret,
+            String jwtAlgorithm,
+            ClientRegistry registry
+    ) {
         if (host == null || host.isBlank()) {
             throw new IllegalArgumentException("Host must not be blank");
         }
@@ -55,7 +70,12 @@ public class RealtimeServer {
         this.host = host;
         this.port = port;
         this.sharedSecret = sharedSecret == null ? "" : sharedSecret;
-        this.registry = new ClientRegistry();
+        this.jwtSecret = jwtSecret == null ? "" : jwtSecret;
+        this.jwtAlgorithm = jwtAlgorithm == null ? "" : jwtAlgorithm;
+        if (registry == null) {
+            throw new IllegalArgumentException("Client registry is required");
+        }
+        this.registry = registry;
         this.clientExecutor = Executors.newCachedThreadPool(task -> {
             Thread thread = new Thread(task, "realtime-client-" + THREAD_NUMBER.incrementAndGet());
             thread.setDaemon(false);
@@ -130,7 +150,9 @@ public class RealtimeServer {
                 return;
             }
 
-            ClientHandler handler = new ClientHandler(socket, registry, this, sharedSecret);
+            ClientHandler handler = new ClientHandler(
+                    socket, registry, this, 90_000, sharedSecret, jwtSecret, jwtAlgorithm
+            );
             registry.registerClient(handler.getClientId(), handler);
             try {
                 clientExecutor.submit(handler);
@@ -143,28 +165,38 @@ public class RealtimeServer {
         }
     }
 
-    /**
-     * Gracefully shuts down the server.
-     */
-    public void stop() {
+    private void shutdown() {
+        if (!shutdown.compareAndSet(false, true)) {
+            return;
+        }
         running = false;
         try {
             if (serverSocket != null && !serverSocket.isClosed()) {
                 serverSocket.close();
             }
-        } catch (IOException ignored) {}
-        registry.closeAll();
-        threadPool.shutdownNow();
-        System.out.println("=== Realtime Server stopped ===");
+        } catch (IOException e) {
+            LOGGER.log(Level.FINE, "Error closing TCP listener: {0}", e.getClass().getSimpleName());
+        }
+        registry.closeAllClients();
+        clientExecutor.shutdownNow();
+        try {
+            if (!clientExecutor.awaitTermination(SHUTDOWN_WAIT_SECONDS, TimeUnit.SECONDS)) {
+                LOGGER.warning("TCP client workers did not stop before the shutdown timeout");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        LOGGER.info("Realtime TCP server stopped");
     }
 
     /**
      * Routes an incoming message from the FastAPI bridge or a connected client.
      * Messages are delivered based on the recipient field:
-     * - "broadcast" → all connected clients
-     * - "student:123" → specific user
+     * - "broadcast" → all authenticated sessions
+     * - "user:123" / "student:123" → every session for a user
      * - "role:student" → all users with role "student"
-     * - "role:teacher" → all users with role "teacher"
+     * - "exam:123" → authenticated sessions authorized and subscribed to an exam
+     * - "session:<connection-id>" → one authenticated connection
      */
     public void routeMessage(Message msg) {
         if (msg == null) {
@@ -176,23 +208,137 @@ public class RealtimeServer {
             return;
         }
 
+        Message.Type type = Message.Type.fromString(msg.getType());
+        if (type != null && isSubmissionEvent(type)) {
+            routeSubmissionMessage(msg, recipient);
+            return;
+        }
+
+        if (type != null && isExamEvent(type) && "fastapi".equals(msg.getSender())
+                && recipient.startsWith("exam:")) {
+            int examId;
+            try {
+                examId = Integer.parseInt(recipient.substring("exam:".length()));
+            } catch (NumberFormatException e) {
+                LOGGER.warning("Rejected exam event with a malformed exam recipient");
+                return;
+            }
+            if (examId <= 0) {
+                LOGGER.warning("Rejected exam event with a malformed exam recipient");
+                return;
+            }
+            for (ClientHandler handler : registry.getHandlersByExam(examId)) {
+                handler.sendMessage(msg);
+            }
+            relayExamEventToServices(msg);
+            return;
+        }
+
         if ("broadcast".equals(recipient)) {
             registry.broadcast(msg);
-        } else if (recipient.startsWith("student:")) {
-            int userId = Integer.parseInt(recipient.substring("student:".length()));
+        } else if (recipient.startsWith("student:") || recipient.startsWith("user:")) {
+            int delimiter = recipient.indexOf(':');
+            int userId = Integer.parseInt(recipient.substring(delimiter + 1));
             for (ClientHandler handler : registry.getHandlersByUserId(userId)) {
-                handler.send(msg);
+                if (handler.isAuthenticated()) {
+                    handler.send(msg);
+                }
             }
         } else if (recipient.startsWith("role:")) {
             String targetRole = recipient.substring("role:".length());
-            for (ClientHandler handler : registry.getAllClients().values()) {
-                if (targetRole.equals(handler.getRole())) {
-                    handler.sendMessage(msg);
-                }
+            for (ClientHandler handler : registry.getHandlersByRole(targetRole)) {
+                handler.sendMessage(msg);
             }
+        } else if (recipient.startsWith("exam:")) {
+            int examId = Integer.parseInt(recipient.substring("exam:".length()));
+            for (ClientHandler handler : registry.getHandlersByExam(examId)) {
+                handler.sendMessage(msg);
+            }
+        } else if (recipient.startsWith("session:")) {
+            registry.sendTo(recipient.substring("session:".length()), msg);
         } else {
             registry.sendTo(recipient, msg);
         }
+    }
+
+    private static boolean isSubmissionEvent(Message.Type type) {
+        return switch (type) {
+            case SUBMISSION_RECEIVED, SUBMISSION_RUNNING, SUBMISSION_STATUS,
+                    SUBMISSION_COMPLETED, SUBMISSION_FAILED, SUBMISSION_ERROR -> true;
+            default -> false;
+        };
+    }
+
+    private static boolean isExamEvent(Message.Type type) {
+        return switch (type) {
+            case EXAM_STARTED, EXAM_ENDED, EXAM_ANNOUNCEMENT, ANNOUNCEMENT_CREATED -> true;
+            default -> false;
+        };
+    }
+
+    private void relayExamEventToServices(Message message) {
+        for (ClientHandler service : registry.getHandlersByRole("service")) {
+            service.sendMessage(message);
+        }
+    }
+
+    private void routeSubmissionMessage(Message message, String recipient) {
+        Object rawSubmissionId = message.getPayload().get("submission_id");
+        if (!(rawSubmissionId instanceof Number number) || number.longValue() <= 0
+                || number.longValue() > Integer.MAX_VALUE) {
+            LOGGER.warning("Rejected submission realtime event without a valid submission id");
+            return;
+        }
+        var owners = registry.findSubmissionRecipients(number.intValue());
+        if (owners.isEmpty()) {
+            LOGGER.warning("Rejected submission realtime event with no known owner");
+            return;
+        }
+        int targetUserId;
+        if ("role:student".equals(recipient)) {
+            targetUserId = owners.get().studentId();
+        } else if ("role:teacher".equals(recipient)) {
+            targetUserId = owners.get().teacherId();
+        } else if (recipient.startsWith("student:")) {
+            targetUserId = parseRecipientUserId(recipient);
+            if (targetUserId != owners.get().studentId()) {
+                LOGGER.warning("Rejected submission event addressed to a non-owner student");
+                return;
+            }
+        } else if (recipient.startsWith("user:")) {
+            targetUserId = parseRecipientUserId(recipient);
+            if (targetUserId != owners.get().studentId() && targetUserId != owners.get().teacherId()) {
+                LOGGER.warning("Rejected submission event addressed to an unauthorized user");
+                return;
+            }
+        } else if (recipient.startsWith("session:")) {
+            ClientHandler handler = registry.getHandlerByClientId(recipient.substring("session:".length()));
+            Integer sessionUserId = handler == null ? null : handler.getUserId();
+            if (handler == null || !handler.isAuthenticated() || sessionUserId == null
+                    || (sessionUserId != owners.get().studentId()
+                    && sessionUserId != owners.get().teacherId())) {
+                LOGGER.warning("Rejected submission event addressed to an unauthorized session");
+                return;
+            }
+            handler.send(message);
+            relaySubmissionEventToServices(message);
+            return;
+        } else {
+            LOGGER.warning("Rejected broad recipient for private submission realtime event");
+            return;
+        }
+        registry.sendToUser(targetUserId, message);
+        relaySubmissionEventToServices(message);
+    }
+
+    private void relaySubmissionEventToServices(Message message) {
+        for (ClientHandler service : registry.getHandlersByRole("service")) {
+            service.sendMessage(message);
+        }
+    }
+
+    private static int parseRecipientUserId(String recipient) {
+        return Integer.parseInt(recipient.substring(recipient.indexOf(':') + 1));
     }
 
     public void broadcast(Message msg) {

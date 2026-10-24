@@ -10,7 +10,7 @@ from starlette.websockets import WebSocketDisconnect
 from app.database import SessionLocal
 from app.core.security import create_access_token
 from app.main import app
-from app.models.exam import Exam
+from app.models.exam import Exam, ExamParticipant, ExamStatus
 from app.models.question import Question, QuestionType
 from app.models.submission import Submission, SubmissionStatus
 from app.models.user import User
@@ -151,37 +151,110 @@ class FakeWebSocket:
         self.closed.append((code, reason))
 
 
+def test_presence_heartbeat_updates_session_without_persisting_each_beat():
+    manager = RealtimeManager(heartbeat_persist_interval_seconds=3600)
+    socket = FakeWebSocket()
+    presence_syncs = []
+
+    async def record_presence_sync(user_id):
+        presence_syncs.append(user_id)
+
+    manager._sync_user_presence = record_presence_sync
+
+    async def run_scenario():
+        await manager.register(socket, 900_001, "student")
+        assert presence_syncs == [900_001]
+        presence_syncs.clear()
+        before = await manager.last_seen(socket, 900_001)
+
+        await asyncio.sleep(0.001)
+        assert await manager.record_heartbeat(socket, 900_001)
+        after = await manager.last_seen(socket, 900_001)
+
+        assert after is not None and before is not None and after > before
+        assert presence_syncs == []
+        assert await manager.connection_count(900_001) == 1
+        await manager.unregister(socket, 900_001)
+
+    asyncio.run(run_scenario())
+
+
 def test_targeted_and_public_events_route_without_broadcasting_submission_data(
     client, teacher_token, student_token
 ):
     teacher_id = _user_id(client, teacher_token)
     student_id = _user_id(client, student_token)
     manager = RealtimeManager()
+    db = SessionLocal()
+    exam = Exam(
+        title="Realtime route exam",
+        teacher_id=teacher_id,
+        status=ExamStatus.started,
+    )
+    db.add(exam)
+    db.commit()
+    db.refresh(exam)
+    db.add(ExamParticipant(exam_id=exam.id, student_id=student_id))
+    db.commit()
     student_socket = FakeWebSocket()
     teacher_socket = FakeWebSocket()
-
     announcement = {
         "type": "exam.announcement",
-        "recipient": "broadcast",
-        "payload": {"exam_id": 12, "message": "Exam starts soon"},
+        "recipient": f"exam:{exam.id}",
+        "payload": {"exam_id": exam.id, "message": "Exam starts soon"},
     }
+
     submission_event = {
         "type": "submission.completed",
         "recipient": f"student:{student_id}",
         "payload": {"submission_id": 9},
     }
+
     async def run_scenario():
         await manager.register(student_socket, student_id, "student")
         await manager.register(teacher_socket, teacher_id, "teacher")
-        assert await manager.broadcast_to_browsers(announcement) == 2
+        assert await manager.publish_bridge_event(announcement, db) == 2
         assert len(student_socket.sent) == len(teacher_socket.sent) == 1
 
         targeted_announcement = {**announcement, "recipient": f"student:{student_id}"}
-        assert await manager.send_to_browser(student_id, targeted_announcement) == 1
+        assert await manager.publish_bridge_event(targeted_announcement, db) == 1
         assert len(student_socket.sent) == 2
         assert len(teacher_socket.sent) == 1
 
-        with pytest.raises(ValueError, match="Only public exam events"):
+        for broad_recipient in ("broadcast", "role:student", "role:teacher"):
+            with pytest.raises(ValueError, match="Exam events require"):
+                await manager.publish_bridge_event(
+                    {**announcement, "recipient": broad_recipient}, db
+                )
+        with pytest.raises(ValueError, match="globally safe"):
+            await manager.broadcast_to_browsers(announcement)
+        with pytest.raises(ValueError, match="exam events"):
+            await manager.send_to_browser(student_id, announcement)
+
+        user_event = {
+            "type": "server.error",
+            "recipient": f"user:{student_id}",
+            "payload": {"error": "internal transport detail"},
+        }
+        assert await manager.publish_bridge_event(user_event, db) == 1
+        assert student_socket.sent[-1]["payload"]["error"] == "Realtime operation failed"
+        assert len(teacher_socket.sent) == 1
+
+        broadcast_error = {
+            "type": "server.error",
+            "recipient": "broadcast",
+            "payload": {"error": "internal detail"},
+        }
+        assert await manager.publish_bridge_event(broadcast_error, db) == 2
+        assert student_socket.sent[-1]["payload"]["error"] == "Realtime operation failed"
+        assert teacher_socket.sent[-1]["payload"]["error"] == "Realtime operation failed"
+
+        role_error = {**broadcast_error, "recipient": "role:teacher"}
+        assert await manager.publish_bridge_event(role_error, db) == 1
+        assert teacher_socket.sent[-1]["type"] == "server.error"
+        assert len(student_socket.sent) == 4
+
+        with pytest.raises(ValueError, match="globally safe"):
             await manager.broadcast_to_browsers(submission_event)
         with pytest.raises(ValueError, match="publish_bridge_event"):
             await manager.send_to_browser(student_id, submission_event)
@@ -189,7 +262,12 @@ def test_targeted_and_public_events_route_without_broadcasting_submission_data(
         assert student_socket.closed == [(1001, "Server shutting down")]
         assert teacher_socket.closed == [(1001, "Server shutting down")]
 
-    asyncio.run(run_scenario())
+    try:
+        asyncio.run(run_scenario())
+    finally:
+        db.delete(exam)
+        db.commit()
+        db.close()
 
 
 def test_bridge_submission_events_are_owner_targeted_and_payloads_are_filtered(
@@ -248,9 +326,28 @@ def test_bridge_submission_events_are_owner_targeted_and_payloads_are_filtered(
             assert other_socket.sent == []
             assert "source_code" not in student_socket.sent[0]["payload"]
 
+            status_event = {
+                "type": "submission.status",
+                "recipient": f"student:{student_id}",
+                "payload": {"submission_id": submission_id, "status": "completed"},
+            }
+            assert await manager.publish_bridge_event(status_event, db) == 1
+            assert student_socket.sent[-1]["type"] == "submission.status"
+            assert other_socket.sent == []
+
+            error_event = {
+                "type": "submission.error",
+                "recipient": f"user:{teacher_id}",
+                "payload": {"submission_id": submission_id, "error_code": "WORKER_ERROR"},
+            }
+            assert await manager.publish_bridge_event(error_event, db) == 1
+            assert teacher_socket.sent[-1]["type"] == "submission.error"
+            assert other_socket.sent == []
+
             teacher_event = {**event, "recipient": "role:teacher"}
             assert await manager.publish_bridge_event(teacher_event, db) == 1
-            assert len(teacher_socket.sent) == 1
+            assert len(teacher_socket.sent) == 2
+            assert teacher_socket.sent[-1]["type"] == "submission.completed"
             assert other_socket.sent == []
 
             unauthorized_recipient = {**event, "recipient": f"student:{student_id + 100000}"}
@@ -269,6 +366,89 @@ def test_bridge_submission_events_are_owner_targeted_and_payloads_are_filtered(
                 db.delete(question)
             db.delete(exam)
             db.commit()
+        db.close()
+
+
+def test_exam_recipient_routes_to_owner_and_authorized_student_sessions(
+    client, teacher_token, student_token
+):
+    teacher_id = _user_id(client, teacher_token)
+    student_id = _user_id(client, student_token)
+    db = SessionLocal()
+    exam = Exam(
+        title="Exam targeted realtime test",
+        teacher_id=teacher_id,
+        status=ExamStatus.started,
+    )
+    db.add(exam)
+    db.commit()
+    db.refresh(exam)
+    db.add(ExamParticipant(exam_id=exam.id, student_id=student_id))
+    db.commit()
+
+    student_tab_one = FakeWebSocket()
+    student_tab_two = FakeWebSocket()
+    teacher_socket = FakeWebSocket()
+    other_teacher_socket = FakeWebSocket()
+    manager = RealtimeManager()
+
+    async def no_presence_write(_user_id):
+        return None
+
+    manager._sync_user_presence = no_presence_write
+    event = {
+        "type": "exam.started",
+        "recipient": f"exam:{exam.id}",
+        "payload": {"exam_id": exam.id, "title": exam.title},
+    }
+
+    async def run_scenario():
+        await manager.register(student_tab_one, student_id, "student")
+        await manager.register(student_tab_two, student_id, "student")
+        await manager.register(teacher_socket, teacher_id, "teacher")
+        await manager.register(other_teacher_socket, teacher_id + 100000, "teacher")
+
+        assert await manager.publish_bridge_event(event, db) == 3
+        assert [
+            socket.sent[0]["type"]
+            for socket in (student_tab_one, student_tab_two, teacher_socket)
+        ] == ["exam.started"] * 3
+        assert other_teacher_socket.sent == []
+
+        await manager.shutdown()
+
+    try:
+        asyncio.run(run_scenario())
+    finally:
+        db.delete(exam)
+        db.commit()
+        db.close()
+
+
+def test_exam_recipient_rejects_mismatched_or_unknown_exam():
+    db = SessionLocal()
+    manager = RealtimeManager()
+    event = {
+        "type": "exam.started",
+        "recipient": "exam:99999999",
+        "payload": {"exam_id": 99999998},
+    }
+
+    async def run_scenario():
+        with pytest.raises(ValueError, match="does not match"):
+            await manager.publish_bridge_event(event, db)
+
+        unknown_event = {
+            "type": "exam.started",
+            "recipient": "exam:99999999",
+            "payload": {"exam_id": 99999999},
+        }
+        with pytest.raises(ValueError, match="unknown exam"):
+            await manager.publish_bridge_event(unknown_event, db)
+
+    try:
+        asyncio.run(run_scenario())
+    finally:
         db.close()
 
 
@@ -301,9 +481,9 @@ def test_six_concurrent_clients_isolate_slow_sends_and_route_events():
     slow_socket = SlowWebSocket()
     user_ids = list(range(800_000, 800_006))
     sockets = [*fast_sockets, slow_socket]
-    announcement = {
-        "type": "exam.started",
-        "payload": {"exam_id": 1, "title": "Concurrent exam"},
+    broadcast_error = {
+        "type": "server.error",
+        "payload": {"error": "Realtime operation failed"},
     }
 
     async def run_scenario():
@@ -312,7 +492,7 @@ def test_six_concurrent_clients_isolate_slow_sends_and_route_events():
             for socket, user_id in zip(sockets, user_ids)
         ))
 
-        broadcast = asyncio.create_task(manager.broadcast_to_browsers(announcement))
+        broadcast = asyncio.create_task(manager.broadcast_to_browsers(broadcast_error))
         await asyncio.sleep(0.01)
         assert all(socket.sent for socket in fast_sockets)
         assert not broadcast.done()
@@ -321,8 +501,8 @@ def test_six_concurrent_clients_isolate_slow_sends_and_route_events():
         assert await manager.connection_count(user_ids[-1]) == 0
 
         targeted = {
-            "type": "exam.announcement",
-            "payload": {"exam_id": 1, "message": "Targeted notice"},
+            "type": "server.error",
+            "payload": {"error": "Targeted notice"},
         }
         assert await manager.send_to_browser(user_ids[2], targeted) == 1
         assert len(fast_sockets[2].sent) == 2

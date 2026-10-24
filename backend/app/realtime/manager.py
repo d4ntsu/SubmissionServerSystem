@@ -10,7 +10,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
-from app.models.exam import Exam
+from app.models.exam import Exam, ExamParticipant
 from app.models.question import Question
 from app.models.submission import Submission
 from app.models.user import User, UserRole
@@ -30,27 +30,41 @@ PUBLIC_EVENT_FIELDS: dict[str, set[str]] = {
     "exam.started": {"exam_id", "title", "start_time", "end_time"},
     "exam.ended": {"exam_id", "title", "start_time", "end_time"},
     "exam.announcement": {"exam_id", "announcement_id", "message", "created_at"},
+    "announcement.created": {"exam_id", "announcement_id", "message", "created_at"},
     "submission.received": {"submission_id"},
     "submission.running": {"submission_id"},
+    "submission.status": {"submission_id", "status"},
     "submission.completed": {"submission_id"},
     "submission.failed": {"submission_id", "error_code"},
+    "submission.error": {"submission_id", "error_code"},
     "server.error": {"error", "code"},
 }
-PUBLIC_BROADCAST_TYPES = {"exam.started", "exam.ended", "exam.announcement"}
+EXAM_SCOPED_EVENT_TYPES = {
+    "exam.started",
+    "exam.ended",
+    "exam.announcement",
+    "announcement.created",
+}
+GLOBAL_BROADCAST_TYPES = {"server.error"}
 PRIVATE_SUBMISSION_TYPES = {
     "submission.received",
     "submission.running",
+    "submission.status",
     "submission.completed",
     "submission.failed",
+    "submission.error",
 }
 REQUIRED_EVENT_FIELDS = {
     "exam.started": {"exam_id"},
     "exam.ended": {"exam_id"},
     "exam.announcement": {"exam_id", "message"},
+    "announcement.created": {"exam_id", "message"},
     "submission.received": {"submission_id"},
     "submission.running": {"submission_id"},
+    "submission.status": {"submission_id", "status"},
     "submission.completed": {"submission_id"},
     "submission.failed": {"submission_id"},
+    "submission.error": {"submission_id"},
     "server.error": {"error"},
 }
 
@@ -140,9 +154,9 @@ class RealtimeManager:
             return len(self._connections.get(user_id, {}))
 
     async def send_to_browser(self, user_id: int, event: dict[str, Any]) -> int:
-        outbound = validate_outbound_event(event)
-        if outbound["type"] in PRIVATE_SUBMISSION_TYPES:
-            raise ValueError("Private submission events must be routed through publish_bridge_event")
+        outbound = _sanitize_global_event(validate_outbound_event(event))
+        if outbound["type"] in PRIVATE_SUBMISSION_TYPES | EXAM_SCOPED_EVENT_TYPES:
+            raise ValueError("Private or exam events must be routed through publish_bridge_event")
         async with self._lock:
             sockets = [
                 connection.websocket
@@ -151,9 +165,9 @@ class RealtimeManager:
         return await self._send_to_sockets(user_id, sockets, outbound)
 
     async def broadcast_to_browsers(self, event: dict[str, Any]) -> int:
-        outbound = validate_outbound_event(event)
-        if outbound["type"] not in PUBLIC_BROADCAST_TYPES:
-            raise ValueError("Only public exam events may be broadcast")
+        outbound = _sanitize_global_event(validate_outbound_event(event))
+        if outbound["type"] not in GLOBAL_BROADCAST_TYPES:
+            raise ValueError("Only globally safe realtime events may be broadcast")
         async with self._lock:
             sockets = [
                 connection.websocket
@@ -163,9 +177,11 @@ class RealtimeManager:
         return await self._send_to_sockets(None, sockets, outbound)
 
     async def broadcast_to_role(self, role: str, event: dict[str, Any]) -> int:
-        outbound = validate_outbound_event(event)
-        if outbound["type"] not in PUBLIC_BROADCAST_TYPES:
-            raise ValueError("Only public exam events may be sent to a role")
+        if role not in {"student", "teacher"}:
+            raise ValueError("Realtime role recipient is not supported")
+        outbound = _sanitize_global_event(validate_outbound_event(event))
+        if outbound["type"] not in GLOBAL_BROADCAST_TYPES:
+            raise ValueError("Only globally safe realtime events may be sent to a role")
         async with self._lock:
             sockets = [
                 socket
@@ -176,14 +192,68 @@ class RealtimeManager:
             ]
         return await self._send_to_sockets(None, sockets, outbound)
 
+    async def send_to_exam(
+        self,
+        exam_id: int,
+        event: dict[str, Any],
+        db: Session,
+        *,
+        target_user_id: int | None = None,
+    ) -> int:
+        """Deliver an exam event to connected users authorized by the current exam model."""
+        outbound = validate_outbound_event(event)
+        if outbound["type"] not in EXAM_SCOPED_EVENT_TYPES:
+            raise ValueError("Only public exam events may be sent to an exam")
+        if isinstance(exam_id, bool) or not isinstance(exam_id, int) or exam_id <= 0:
+            raise ValueError("Exam recipient must be a positive integer")
+        if target_user_id is not None and (
+            isinstance(target_user_id, bool)
+            or not isinstance(target_user_id, int)
+            or target_user_id <= 0
+        ):
+            raise ValueError("User recipient must be a positive integer")
+        if outbound["payload"].get("exam_id") != exam_id:
+            raise ValueError("Exam recipient does not match the event payload")
+
+        exam = db.get(Exam, exam_id)
+        if exam is None:
+            raise ValueError("Exam event references an unknown exam")
+
+        async with self._lock:
+            connected_user_ids = set(self._connections)
+
+        authorized_roles: dict[int, str] = {}
+        teacher = db.get(User, exam.teacher_id)
+        if teacher is not None and teacher.role == UserRole.teacher:
+            authorized_roles[teacher.id] = "teacher"
+
+        if connected_user_ids:
+            student_ids = db.query(ExamParticipant.student_id).join(
+                User, User.id == ExamParticipant.student_id
+            ).filter(
+                ExamParticipant.exam_id == exam_id,
+                ExamParticipant.student_id.in_(connected_user_ids),
+                User.role == UserRole.student,
+            ).all()
+            authorized_roles.update({user_id: "student" for (user_id,) in student_ids})
+
+        if target_user_id is not None and target_user_id not in authorized_roles:
+            raise ValueError("User recipient is not authorized for this exam")
+
+        async with self._lock:
+            sockets = [
+                connection.websocket
+                for user_id, connections in self._connections.items()
+                if target_user_id is None or user_id == target_user_id
+                if authorized_roles.get(user_id) is not None
+                for connection in connections.values()
+                if connection.role == authorized_roles[user_id]
+            ]
+        return await self._send_to_sockets(None, sockets, outbound)
+
     async def publish_bridge_event(self, event: dict[str, Any], db: Session) -> int:
         """Route one validated internal event without exposing transport recipients to browsers."""
-        outbound = validate_outbound_event(event)
-        if outbound["type"] == "server.error":
-            outbound["payload"] = {
-                "code": outbound["payload"].get("code", "realtime_error"),
-                "error": "Realtime operation failed",
-            }
+        outbound = _sanitize_global_event(validate_outbound_event(event))
         recipient = event.get("recipient")
         if not isinstance(recipient, str):
             raise ValueError("Bridge event recipient is required")
@@ -192,19 +262,43 @@ class RealtimeManager:
             user_id = self._authorized_submission_recipient(outbound["payload"], recipient, db)
             return await self._send_private_to_user(user_id, outbound)
 
+        if outbound["type"] in EXAM_SCOPED_EVENT_TYPES and recipient in {
+            "broadcast", "role:student", "role:teacher"
+        }:
+            raise ValueError("Exam events require an exam-scoped or authorized user recipient")
         if recipient == "broadcast":
             return await self.broadcast_to_browsers(outbound)
         if recipient == "role:student":
             return await self.broadcast_to_role("student", outbound)
         if recipient == "role:teacher":
             return await self.broadcast_to_role("teacher", outbound)
-        if recipient.startswith("student:") or recipient.startswith("teacher:"):
+        if recipient.startswith("exam:"):
+            try:
+                exam_id = int(recipient.split(":", 1)[1])
+            except ValueError as exc:
+                raise ValueError("Bridge event exam recipient is malformed") from exc
+            return await self.send_to_exam(exam_id, outbound, db)
+        if recipient.startswith(("student:", "teacher:", "user:")):
             try:
                 user_id = int(recipient.split(":", 1)[1])
             except ValueError as exc:
                 raise ValueError("Bridge event recipient is malformed") from exc
             if user_id <= 0:
                 raise ValueError("Bridge event recipient is malformed")
+            user = db.get(User, user_id)
+            if user is None:
+                raise ValueError("Bridge event references an unknown user")
+            if recipient.startswith("student:") and user.role != UserRole.student:
+                raise ValueError("Bridge event student recipient has the wrong role")
+            if recipient.startswith("teacher:") and user.role != UserRole.teacher:
+                raise ValueError("Bridge event teacher recipient has the wrong role")
+            if outbound["type"] in EXAM_SCOPED_EVENT_TYPES:
+                return await self.send_to_exam(
+                    outbound["payload"]["exam_id"],
+                    outbound,
+                    db,
+                    target_user_id=user_id,
+                )
             return await self.send_to_browser(user_id, outbound)
         raise ValueError("Bridge event recipient is not supported by the browser layer")
 
@@ -295,7 +389,7 @@ class RealtimeManager:
             raise ValueError("Submission event references an unknown submission")
 
         student_recipient = f"student:{submission.student_id}"
-        if recipient == student_recipient:
+        if recipient in {student_recipient, f"user:{submission.student_id}"}:
             student = db.get(User, submission.student_id)
             if student is not None and student.role == UserRole.student:
                 return submission.student_id
@@ -305,7 +399,11 @@ class RealtimeManager:
         if exam:
             teacher = db.get(User, exam.teacher_id)
             if teacher is not None and teacher.role == UserRole.teacher:
-                if recipient == f"teacher:{exam.teacher_id}" or recipient == "role:teacher":
+                if recipient in {
+                    f"teacher:{exam.teacher_id}",
+                    f"user:{exam.teacher_id}",
+                    "role:teacher",
+                }:
                     return exam.teacher_id
         if recipient == "role:student":
             student = db.get(User, submission.student_id)
@@ -376,14 +474,22 @@ def validate_outbound_event(event: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Realtime event contains an unexpected or private payload field")
     if not REQUIRED_EVENT_FIELDS[event_type].issubset(payload):
         raise ValueError("Realtime event is missing required payload fields")
-    if event_type in {"exam.started", "exam.ended", "exam.announcement"}:
+    if event_type in {
+        "exam.started", "exam.ended", "exam.announcement", "announcement.created"
+    }:
         _require_positive_id(payload, "exam_id")
     if event_type.startswith("submission."):
         _require_positive_id(payload, "submission_id")
     if "announcement_id" in payload:
         _require_positive_id(payload, "announcement_id")
-    if event_type == "exam.announcement":
+    if event_type in {"exam.announcement", "announcement.created"}:
         _require_text(payload, "message", max_length=4000)
+    if event_type == "submission.status":
+        status = payload.get("status")
+        if not isinstance(status, str) or status not in {
+            "queued", "running", "completed", "error"
+        }:
+            raise ValueError("Realtime submission status is not supported")
     if event_type == "server.error":
         _require_text(payload, "error", max_length=500)
     if "error_code" in payload:
@@ -422,6 +528,18 @@ def validate_outbound_event(event: dict[str, Any]) -> dict[str, Any]:
     if len(json.dumps(outbound, ensure_ascii=False).encode("utf-8")) > 64 * 1024:
         raise ValueError("Realtime event exceeds the message size limit")
     return outbound
+
+
+def _sanitize_global_event(event: dict[str, Any]) -> dict[str, Any]:
+    if event["type"] != "server.error":
+        return event
+    return {
+        **event,
+        "payload": {
+            "code": event["payload"].get("code", "realtime_error"),
+            "error": "Realtime operation failed",
+        },
+    }
 
 
 def _require_positive_id(payload: dict[str, Any], key: str) -> None:

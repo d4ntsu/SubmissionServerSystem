@@ -27,6 +27,8 @@ public final class Config {
         override("database.path", "DATABASE_PATH");
         override("auth.shared_secret", "SHARED_SECRET");
         override("auth.shared_secret", "SOCKET_SERVER_SHARED_SECRET");
+        override("auth.jwt_secret", "SECRET_KEY");
+        override("auth.jwt_algorithm", "JWT_ALGORITHM");
     }
 
     private static void override(String key, String envVar) {
@@ -52,5 +54,13 @@ public final class Config {
 
     public static String getSharedSecret() {
         return props.getProperty("auth.shared_secret", "").trim();
+    }
+
+    public static String getJwtSecret() {
+        return props.getProperty("auth.jwt_secret", "").trim();
+    }
+
+    public static String getJwtAlgorithm() {
+        return props.getProperty("auth.jwt_algorithm", "HS256").trim();
     }
 }

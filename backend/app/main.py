@@ -4,10 +4,13 @@ import asyncio
 import logging
 
 from app.core.config import settings
-from app.database import Base, engine, ensure_user_presence_schema
+from app.database import Base, SessionLocal, engine, ensure_user_presence_schema
 from app.models import *  # noqa: F401,F403 - register all models for metadata
 from app.api import auth, exams, questions, test_cases, submissions, results, realtime
+from app.realtime.bridge import RealtimeBridge
+from app.realtime.event_router import RealtimeEventRouter
 from app.realtime.manager import realtime_manager
+from app.realtime.submission_events import configure_submission_event_transport
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -16,6 +19,29 @@ Base.metadata.create_all(bind=engine)
 ensure_user_presence_schema()
 
 app = FastAPI(title="LAN Programming Exam System", version="0.1.0")
+app.state.realtime_manager = realtime_manager
+
+
+async def _dispatch_java_realtime_event(event: dict) -> None:
+    db = SessionLocal()
+    try:
+        await app.state.realtime_manager.publish_bridge_event(event, db)
+    finally:
+        db.close()
+
+
+java_event_router = RealtimeEventRouter()
+java_event_router.subscribe(_dispatch_java_realtime_event)
+app.state.realtime_event_router = java_event_router
+
+realtime_bridge = RealtimeBridge(
+    settings.socket_server_host,
+    settings.socket_server_port,
+    settings.socket_server_shared_secret,
+    event_router=java_event_router,
+)
+app.state.realtime_bridge = realtime_bridge
+configure_submission_event_transport(realtime_bridge.send)
 
 origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
 app.add_middleware(
@@ -40,12 +66,14 @@ _worker_task: asyncio.Task | None = None
 
 @app.on_event("startup")
 async def start_realtime_bridge():
-    await realtime_bridge.start()
+    connected = await realtime_bridge.connect()
+    if not connected:
+        logger.warning("Java realtime server is unavailable; bridge reconnect will continue in the background")
 
 
 @app.on_event("shutdown")
 async def stop_realtime_bridge():
-    await realtime_bridge.stop()
+    await realtime_bridge.disconnect()
 
 
 @app.on_event("startup")
