@@ -7,7 +7,7 @@ Here are the ways to test the Phase 3 submission & grading pipeline:
 From the `backend` directory:
 
 ```powershell
-D:\CodeProjects\SubmissionServerSystem\backend\.venv311\Scripts\python.exe -m pytest tests\ -v
+.venv311\Scripts\python.exe -m pytest tests\ -v
 ```
 
 This runs all 32 tests, including the 17 new ones covering:
@@ -22,7 +22,7 @@ This runs all 32 tests, including the 17 new ones covering:
 Start the server (it launches the grading worker automatically):
 
 ```powershell
-cd D:\CodeProjects\SubmissionServerSystem\backend
+cd backend
 .\.venv311\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
