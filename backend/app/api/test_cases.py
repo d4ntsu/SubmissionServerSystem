@@ -16,6 +16,12 @@ def create_test_case(
     current_user: User = Depends(require_role(UserRole.teacher)),
     db: Session = Depends(get_db),
 ):
+    if not data.expected_output.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="expected_output is required; the grader cannot score a wrong answer without it",
+        )
+
     test_case = TestCase(**data.model_dump())
     db.add(test_case)
     db.commit()

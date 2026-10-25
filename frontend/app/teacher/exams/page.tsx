@@ -21,6 +21,8 @@ import {
   X,
   AlertCircle,
   HelpCircle,
+  Lock,
+  KeyRound,
 } from "lucide-react";
 
 export default function TeacherExamManagementPage() {
@@ -33,6 +35,9 @@ export default function TeacherExamManagementPage() {
   const [formTitle, setFormTitle] = useState("");
   const [formDescription, setFormDescription] = useState("");
   const [formDuration, setFormDuration] = useState(90);
+  const [formPasswordEnabled, setFormPasswordEnabled] = useState(false);
+  const [formPassword, setFormPassword] = useState("");
+  const [formError, setFormError] = useState("");
 
   const filteredExams = exams.filter((e) => {
     if (filter === "all") return true;
@@ -44,6 +49,9 @@ export default function TeacherExamManagementPage() {
     setFormTitle("");
     setFormDescription("");
     setFormDuration(90);
+    setFormPasswordEnabled(false);
+    setFormPassword("");
+    setFormError("");
     setIsModalOpen(true);
   };
 
@@ -52,6 +60,9 @@ export default function TeacherExamManagementPage() {
     setFormTitle(exam.title);
     setFormDescription(exam.description);
     setFormDuration(exam.duration_minutes);
+    setFormPasswordEnabled(Boolean(exam.has_password));
+    setFormPassword("");
+    setFormError("");
     setIsModalOpen(true);
   };
 
@@ -59,11 +70,22 @@ export default function TeacherExamManagementPage() {
     e.preventDefault();
     if (!formTitle.trim()) return;
 
+    const hasExistingPassword = Boolean(editingExam?.has_password);
+    if (formPasswordEnabled && !formPassword.trim() && !hasExistingPassword) {
+      setFormError("Enter an exam password or disable password protection.");
+      return;
+    }
+
+    const accessPassword = formPasswordEnabled
+      ? formPassword.trim() || (hasExistingPassword ? undefined : "")
+      : "";
+
     if (editingExam) {
       updateExam(editingExam.id, {
         title: formTitle,
         description: formDescription,
         duration_minutes: Number(formDuration),
+        access_password: accessPassword,
       });
     } else {
       createExam({
@@ -71,6 +93,7 @@ export default function TeacherExamManagementPage() {
         description: formDescription,
         duration_minutes: Number(formDuration),
         status: "draft",
+        access_password: accessPassword || undefined,
       });
     }
 
@@ -182,6 +205,12 @@ export default function TeacherExamManagementPage() {
                           <p className="text-slate-500 text-[11px] line-clamp-1 max-w-sm mt-0.5">
                             {exam.description}
                           </p>
+                          {exam.has_password && (
+                            <span className="mt-1 inline-flex items-center gap-1 rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700 font-mono">
+                              <Lock className="w-2.5 h-2.5" />
+                              Password protected
+                            </span>
+                          )}
                         </td>
 
                         <td className="py-3 px-4 font-mono font-semibold text-slate-700">
@@ -349,6 +378,58 @@ export default function TeacherExamManagementPage() {
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded text-slate-900 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono"
                   />
                 </div>
+
+                <div className="flex items-center justify-between p-3 bg-slate-50 rounded border border-slate-200">
+                  <div className="flex items-start gap-2">
+                    <KeyRound className="w-4 h-4 text-orange-500 mt-0.5" />
+                    <div>
+                      <span className="font-bold text-slate-800 text-xs block">
+                        Require an exam entry password
+                      </span>
+                      <span className="text-[10px] text-slate-500">
+                        Students must enter this password before the question window opens.
+                      </span>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={formPasswordEnabled}
+                    onChange={(e) => {
+                      setFormPasswordEnabled(e.target.checked);
+                      setFormError("");
+                    }}
+                    className="w-4 h-4 accent-orange-500 rounded"
+                  />
+                </div>
+
+                {formPasswordEnabled && (
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
+                      Exam Password {editingExam?.has_password ? "(leave blank to keep current)" : "*"}
+                    </label>
+                    <input
+                      type="password"
+                      value={formPassword}
+                      onChange={(e) => {
+                        setFormPassword(e.target.value);
+                        setFormError("");
+                      }}
+                      placeholder={
+                        editingExam?.has_password
+                          ? "Enter a new password to replace the current one"
+                          : "e.g. CS201-MIDTERM"
+                      }
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded text-slate-900 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono"
+                    />
+                  </div>
+                )}
+
+                {formError && (
+                  <div className="rounded border border-red-200 bg-red-50 p-2.5 text-[11px] text-red-700 flex items-start gap-2">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span>{formError}</span>
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">

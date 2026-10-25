@@ -20,9 +20,11 @@ export interface Exam {
   status: ExamStatus;
   questions_count?: number;
   total_points?: number;
+  has_password?: boolean;
 }
 
 export type QuestionType = "STDIN_STDOUT" | "JAVA_CLASS_METHOD";
+export type CodingLanguage = "java" | "python";
 
 export interface Question {
   id: number;
@@ -32,7 +34,7 @@ export interface Question {
   points: number;
   question_type: QuestionType;
   time_limit: number;
-  memory_limit: number;
+  language: CodingLanguage;
   class_name?: string | null;
   method_name?: string | null;
   method_mode?: "STATIC" | "INSTANCE" | null;
@@ -66,6 +68,11 @@ export interface SubmissionTestResult {
   exit_code?: number | null;
   time?: number | null; // in seconds
   memory?: number | null; // in KB / MB
+  input_data?: string | null;
+  expected_output?: string | null;
+  awarded_points?: number | null;
+  score_weight?: number | null;
+  message?: string | null;
 }
 
 export interface Submission {

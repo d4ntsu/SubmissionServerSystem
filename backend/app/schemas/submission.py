@@ -31,6 +31,7 @@ class SubmissionTestResultResponse(BaseModel):
     id: int
     submission_id: int
     test_case_id: int
+    is_sample: bool = False
     passed: int
     stdout: str | None = None
     stderr: str | None = None
@@ -38,5 +39,10 @@ class SubmissionTestResultResponse(BaseModel):
     exit_code: int | None = None
     time: float | None = None
     memory: float | None = None
+    input_data: str | None = None
+    expected_output: str | None = None
+    score_weight: float | None = None
+    awarded_points: float | None = None
+    message: str | None = None
 
     model_config = {"from_attributes": True}

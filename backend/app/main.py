@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 from app.core.config import settings
-from app.database import Base, engine
+from app.database import Base, engine, run_lightweight_migrations
 from app.models import *  # noqa: F401,F403 - register all models for metadata
 from app.api import auth, exams, questions, test_cases, submissions, results
 
@@ -12,6 +12,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
+run_lightweight_migrations()
 
 app = FastAPI(title="LAN Programming Exam System", version="0.1.0")
 

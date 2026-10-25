@@ -1,38 +1,39 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { MarkdownRenderer } from "@/components/markdown/MarkdownRenderer";
+import { ExamPasswordGate } from "@/components/exam/ExamPasswordGate";
+import { ExamWindowGuard } from "@/components/exam/ExamWindowGuard";
+import { QuestionSidebar } from "@/components/exam/QuestionSidebar";
+import { SubmitReviewModal } from "@/components/exam/SubmitReviewModal";
 import { useAuth } from "@/lib/auth-context";
 import { useSocket } from "@/lib/socket-context";
-import { MOCK_EXAMS, MOCK_QUESTIONS, MOCK_TEST_CASES } from "@/lib/api";
-import { Question, TestCase } from "@/types";
+import { MOCK_QUESTIONS, MOCK_TEST_CASES } from "@/lib/api";
+import { gradeSampleTests, hasAnswer } from "@/lib/grading";
+import { CodingLanguage, Question, QuestionType, TestCase } from "@/types";
 import {
-  Clock,
-  Play,
-  Send,
-  Terminal,
-  Code2,
-  CheckCircle,
   AlertTriangle,
-  RotateCcw,
-  Copy,
-  ChevronLeft,
-  ChevronRight,
+  CheckCircle,
+  Clock,
+  Code2,
   ExternalLink,
-  Info,
-  Cpu,
-  Layers,
-  Radio,
+  FileWarning,
   Megaphone,
-  Lock,
-  ListChecks,
+  PanelRightClose,
+  PanelRightOpen,
+  Play,
+  Radio,
+  RotateCcw,
+  Send,
+  ShieldCheck,
+  Terminal,
 } from "lucide-react";
 
-const CODE_TEMPLATES: Record<string, Record<string, string>> = {
+const CODE_TEMPLATES: Record<CodingLanguage, Record<QuestionType, string>> = {
   java: {
     STDIN_STDOUT: `import java.util.Scanner;
 
@@ -59,21 +60,39 @@ public class Solution {
 def main():
     lines = sys.stdin.read().splitlines()
     # Implement your solution here
+    pass
 
 if __name__ == "__main__":
     main()`,
     JAVA_CLASS_METHOD: `class Calculator:
     @staticmethod
     def evaluateExpression(op: str, a: int, b: int) -> int:
+        # Implement your solution here
         return 0`,
   },
 };
+
+function templateFor(question: Question): string {
+  return (
+    CODE_TEMPLATES[question.language]?.[question.question_type] ||
+    CODE_TEMPLATES.java.STDIN_STDOUT
+  );
+}
+
+function isQuestionConfigured(question: Question, cases: TestCase[]): boolean {
+  if (!cases.length) return false;
+  return cases.every((testCase) =>
+    question.question_type === "JAVA_CLASS_METHOD"
+      ? Boolean(testCase.expected_return?.trim())
+      : Boolean(testCase.expected_stdout?.trim())
+  );
+}
 
 export default function ExamWorkspacePage() {
   const params = useParams();
   const router = useRouter();
   const examId = Number(params?.id) || 1;
-  const { user, isTeacher } = useAuth();
+  const { user, isTeacher, isStudent } = useAuth();
   const {
     submitCode,
     announcements,
@@ -82,57 +101,84 @@ export default function ExamWorkspacePage() {
     questions: allQuestions,
     testCases: allTestCases,
     addLog,
+    hasExamPassword,
+    verifyExamPassword,
   } = useSocket();
 
-  const exam = exams.find((e) => e.id === examId) || exams[0];
+  const exam = exams.find((item) => item.id === examId);
   const questions = allQuestions[examId] || MOCK_QUESTIONS[examId] || [];
 
   const [currentQIndex, setCurrentQIndex] = useState(0);
-  const currentQuestion: Question = questions[currentQIndex] || questions[0];
-  const testCases: TestCase[] =
-    allTestCases[currentQuestion?.id] || MOCK_TEST_CASES[currentQuestion?.id] || [];
-
-  const resultsVisible = currentQuestion?.show_result_to_student !== false;
-
-  const [language, setLanguage] = useState("java");
-  const [code, setCode] = useState<string>("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [answers, setAnswers] = useState<Record<number, string>>({});
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [isSubmittingExam, setIsSubmittingExam] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [submittedCount, setSubmittedCount] = useState(0);
+  const [submitError, setSubmitError] = useState("");
+  const [accessGranted, setAccessGranted] = useState(false);
   const [isRunningSample, setIsRunningSample] = useState(false);
   const [consoleOutput, setConsoleOutput] = useState<string | null>(null);
   const [consoleStatus, setConsoleStatus] = useState<"idle" | "success" | "error">("idle");
-  const [recentSubmissionId, setRecentSubmissionId] = useState<number | null>(null);
-
-  // Instructor broadcast widget toggle & state
   const [showBroadcastWidget, setShowBroadcastWidget] = useState(false);
   const [broadcastMessage, setBroadcastMessage] = useState("");
   const [broadcastTitle, setBroadcastTitle] = useState("Exam Instruction");
-  const [broadcastPriority, setBroadcastPriority] = useState<"urgent" | "warning" | "info">("urgent");
+  const [broadcastPriority, setBroadcastPriority] = useState<"urgent" | "warning" | "info">(
+    "urgent"
+  );
+  const [timeLeft, setTimeLeft] = useState((exam?.duration_minutes || 90) * 60);
 
-  // Timer countdown
-  const [timeLeft, setTimeLeft] = useState(58 * 60 + 30);
+  const currentQuestion = questions[currentQIndex] || questions[0];
+  const currentCode = currentQuestion ? answers[currentQuestion.id] || "" : "";
+  const questionTestCases = currentQuestion ? allTestCases[currentQuestion.id] || [] : [];
 
   useEffect(() => {
+    if (!exam) return;
+    if (isTeacher) {
+      setAccessGranted(true);
+      return;
+    }
+    if (!hasExamPassword(exam.id)) {
+      setAccessGranted(true);
+      return;
+    }
+    const key = `exam_unlocked_${exam.id}_${user?.id ?? "anonymous"}`;
+    setAccessGranted(window.sessionStorage.getItem(key) === "1");
+  }, [exam, hasExamPassword, isTeacher, user?.id]);
+
+  useEffect(() => {
+    if (!questions.length) return;
+    setAnswers((previous) => {
+      let changed = false;
+      const next = { ...previous };
+      questions.forEach((question) => {
+        if (next[question.id] === undefined) {
+          next[question.id] = templateFor(question);
+          changed = true;
+        }
+      });
+      return changed ? next : previous;
+    });
+  }, [questions]);
+
+  useEffect(() => {
+    setTimeLeft((exam?.duration_minutes || 90) * 60);
+  }, [exam?.id, exam?.duration_minutes]);
+
+  useEffect(() => {
+    if (submitted || !accessGranted) return;
     const timer = setInterval(() => {
-      setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0));
+      setTimeLeft((previous) => (previous > 0 ? previous - 1 : 0));
     }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [submitted, accessGranted]);
 
-  // Auto-dismiss the submission confirmation after 5 seconds
-  useEffect(() => {
-    if (!recentSubmissionId) return;
-    const timer = setTimeout(() => setRecentSubmissionId(null), 5000);
-    return () => clearTimeout(timer);
-  }, [recentSubmissionId]);
-
-  // Log when a student opens the test so it appears in the realtime activity panel
   const loggedStartRef = React.useRef<string | null>(null);
   useEffect(() => {
-    if (!user || !exam?.id) return;
+    if (!user || !exam?.id || !accessGranted) return;
     const sessionKey = `${exam.id}-${user.id}-${isTeacher ? "teacher" : "student"}`;
     if (loggedStartRef.current === sessionKey) return;
     loggedStartRef.current = sessionKey;
-
     addLog(
       "EVENT",
       isTeacher ? "Teacher Preview" : user.full_name,
@@ -140,29 +186,24 @@ export default function ExamWorkspacePage() {
         ? `Opened test "${exam.title}" to review all questions`
         : `Started test "${exam.title}"`
     );
-  }, [exam?.id, exam?.title, user, isTeacher, addLog]);
+  }, [exam?.id, exam?.title, user, isTeacher, addLog, accessGranted]);
 
-  // Set default code template
-  useEffect(() => {
-    if (currentQuestion) {
-      const qType = currentQuestion.question_type;
-      const template =
-        CODE_TEMPLATES[language]?.[qType] ||
-        CODE_TEMPLATES["java"]["STDIN_STDOUT"];
-      setCode(template);
-      setConsoleOutput(null);
-      setConsoleStatus("idle");
-    }
-  }, [currentQuestion?.id, language]);
+  const answeredIds = useMemo(
+    () => questions.filter((question) => hasAnswer(answers[question.id] || "")).map((q) => q.id),
+    [answers, questions]
+  );
 
   const formatTime = (seconds: number) => {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+    const minutes = Math.floor(seconds / 60);
+    const remaining = seconds % 60;
+    return `${minutes.toString().padStart(2, "0")}:${remaining.toString().padStart(2, "0")}`;
   };
 
   const selectQuestion = (index: number) => {
     setCurrentQIndex(index);
+    setConsoleOutput(null);
+    setConsoleStatus("idle");
+    setSidebarOpen(window.innerWidth >= 1280);
     const question = questions[index];
     if (!question) return;
     addLog(
@@ -172,52 +213,131 @@ export default function ExamWorkspacePage() {
     );
   };
 
+  const updateCode = (value: string) => {
+    if (!currentQuestion) return;
+    setAnswers((previous) => ({ ...previous, [currentQuestion.id]: value }));
+  };
+
+  const handleUnlock = (password: string) => {
+    if (!exam) return false;
+    const valid = verifyExamPassword(exam.id, password);
+    if (!valid) {
+      addLog(
+        "WARN",
+        user?.full_name || "Student",
+        `Failed password attempt for password-protected test "${exam.title}"`
+      );
+      return false;
+    }
+    const key = `exam_unlocked_${exam.id}_${user?.id ?? "anonymous"}`;
+    window.sessionStorage.setItem(key, "1");
+    setAccessGranted(true);
+    addLog(
+      "EVENT",
+      user?.full_name || "Student",
+      `Entered password-protected test "${exam.title}"`
+    );
+    return true;
+  };
+
   const handleRunSample = () => {
+    if (!currentQuestion) return;
     setIsRunningSample(true);
-    setConsoleOutput("Initializing Piston sandbox container...\nRunning test against Sample Case 1...\n");
+    setConsoleOutput("Evaluating visible sample test cases...\n");
     setConsoleStatus("idle");
     addLog(
       "INFO",
       isTeacher ? "Teacher Preview" : user?.full_name || "Student",
-      `Ran sample test for "${currentQuestion.title}"`
+      `Ran sample tests for "${currentQuestion.title}"`
     );
 
     setTimeout(() => {
+      const sampleCases = questionTestCases.filter((testCase) => testCase.is_sample);
+      const outcome = gradeSampleTests(currentQuestion, questionTestCases, currentCode);
+
+      if (!sampleCases.length) {
+        setConsoleOutput(
+          "NO SAMPLE TESTS CONFIGURED\nThis question has no visible sample test cases in the database."
+        );
+        setConsoleStatus("error");
+      } else if (outcome.status === "error") {
+        setConsoleOutput(`GRADING ERROR\n${outcome.error_summary}`);
+        setConsoleStatus("error");
+      } else {
+        const lines = outcome.test_results.map((result, index) => {
+          const verdict = result.passed === 1 ? "PASS" : "FAIL";
+          const expected = result.expected_output || "(missing expected answer)";
+          const actual =
+            result.passed === 1
+              ? expected
+              : result.message || "Wrong answer: no score awarded";
+          return `Sample #${index + 1}: ${verdict}\n  Expected: ${expected}\n  Actual:   ${actual}`;
+        });
+        const passed = outcome.test_results.filter((result) => result.passed === 1).length;
+        setConsoleOutput(
+          `=== SAMPLE TEST EXECUTION ===\nResult: ${passed}/${outcome.test_results.length} sample tests passed\n\n${lines.join(
+            "\n\n"
+          )}\n\nOnly passing test cases earn points during final grading.`
+        );
+        setConsoleStatus(passed === outcome.test_results.length ? "success" : "error");
+      }
       setIsRunningSample(false);
-      setConsoleOutput(
-        "=== SAMPLE TEST EXECUTION ===\nStatus: PASSED (1/1 sample)\nExecution Time: 0.12s\nMemory Consumed: 14.8 MB\nOutput matches expected specification exactly."
-      );
-      setConsoleStatus("success");
-    }, 1000);
+    }, 700);
   };
 
-  const handleSubmitSolution = async () => {
-    if (!user) return;
-    setIsSubmitting(true);
+  const handleResetCode = () => {
+    if (!currentQuestion) return;
+    updateCode(templateFor(currentQuestion));
+    setConsoleOutput(null);
+    setConsoleStatus("idle");
+  };
+
+  const handleConfirmSubmit = async () => {
+    if (!user || !exam) return;
+    setIsSubmittingExam(true);
+    setSubmitError("");
+    const toSubmit = questions;
 
     try {
-      const sub = await submitCode({
-        student_id: user.id,
-        student_name: user.full_name,
-        question_id: currentQuestion.id,
-        question_title: currentQuestion.title,
-        exam_id: exam.id,
-        exam_title: exam.title,
-        language: language,
-        source_code: code,
-      });
-
-      setRecentSubmissionId(sub.id);
-    } catch (e) {
-      console.error(e);
+      for (const question of toSubmit) {
+        await submitCode({
+          student_id: user.id,
+          student_name: user.full_name,
+          question_id: question.id,
+          question_title: question.title,
+          exam_id: exam.id,
+          exam_title: exam.title,
+          language: question.language,
+          source_code: answers[question.id] ?? templateFor(question),
+        });
+      }
+      setSubmittedCount(toSubmit.length);
+      setReviewOpen(false);
+      setSubmitted(true);
+      if (typeof document !== "undefined" && document.fullscreenElement) {
+        document.exitFullscreen().catch(() => undefined);
+      }
+      addLog(
+        "SUBMISSION",
+        user.full_name,
+        `Confirmed final submission of test "${exam.title}" (${toSubmit.length} question${
+          toSubmit.length === 1 ? "" : "s"
+        } submitted for grading)`
+      );
+      setTimeout(() => {
+        router.push(`/student/results/${exam.id}`);
+      }, 2600);
+    } catch (error) {
+      console.error(error);
+      setSubmitError("The test could not be submitted. Please try again.");
     } finally {
-      setIsSubmitting(false);
+      setIsSubmittingExam(false);
     }
   };
 
-  const handleSendBroadcast = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!broadcastMessage.trim()) return;
+  const handleSendBroadcast = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!broadcastMessage.trim() || !exam) return;
     postAnnouncement({
       title: broadcastTitle,
       message: broadcastMessage,
@@ -227,10 +347,115 @@ export default function ExamWorkspacePage() {
     setBroadcastMessage("");
   };
 
+  if (!exam) {
+    return (
+      <ProtectedRoute>
+        <AppLayout hideNavbar={isStudent}>
+          <div className="bg-white rounded-lg border border-slate-200 p-8 text-center text-sm text-slate-500">
+            This examination could not be found.
+          </div>
+        </AppLayout>
+      </ProtectedRoute>
+    );
+  }
+
+  if (!accessGranted) {
+    return (
+      <ProtectedRoute>
+        <AppLayout hideNavbar={isStudent}>
+          <ExamPasswordGate
+            examTitle={exam.title}
+            durationMinutes={exam.duration_minutes}
+            onSubmit={handleUnlock}
+          />
+        </AppLayout>
+      </ProtectedRoute>
+    );
+  }
+
+  if (submitted) {
+    return (
+      <ProtectedRoute>
+        <AppLayout hideNavbar={isStudent}>
+          <div className="min-h-[70vh] flex items-center justify-center">
+            <div className="w-full max-w-md bg-white rounded-lg border border-slate-200 shadow-sm p-6 text-center space-y-4">
+              <div className="mx-auto w-12 h-12 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                <CheckCircle className="w-6 h-6" />
+              </div>
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-700 font-mono">
+                  Test submitted
+                </span>
+                <h1 className="text-lg font-bold text-slate-900 mt-1">{exam.title}</h1>
+                <p className="mt-2 text-xs text-slate-500 leading-relaxed">
+                  {submittedCount} question{submittedCount === 1 ? "" : "s"} were sent for grading.
+                  {(() => {
+                    const unanswered = questions.filter(
+                      (question) => !hasAnswer(answers[question.id] || "")
+                    ).length;
+                    if (unanswered === 0) return " You will be redirected to your test result shortly.";
+                    return ` ${unanswered} unanswered question${
+                      unanswered === 1 ? "" : "s"
+                    } will be graded from the saved code and may receive 0 points. You will be redirected to your test result shortly.`;
+                  })()}
+                </p>
+              </div>
+              <Link
+                href={`/student/results/${exam.id}`}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs rounded shadow-xs transition-colors"
+              >
+                View Test Result
+                <ExternalLink className="w-3.5 h-3.5" />
+              </Link>
+              <p className="text-[10px] text-slate-400 font-mono">
+                Do not close this window until the redirect completes.
+              </p>
+            </div>
+          </div>
+        </AppLayout>
+      </ProtectedRoute>
+    );
+  }
+
+  if (!currentQuestion) {
+    return (
+      <ProtectedRoute>
+        <AppLayout hideNavbar={isStudent}>
+          <div className="bg-white rounded-lg border border-slate-200 p-8 text-center space-y-2">
+            <FileWarning className="w-8 h-8 text-amber-500 mx-auto" />
+            <h1 className="text-sm font-bold text-slate-800">No questions configured</h1>
+            <p className="text-xs text-slate-500">
+              This examination does not contain any questions in the database yet.
+            </p>
+            <Link href="/dashboard" className="text-xs font-bold text-orange-600 hover:underline">
+              Return to exam dashboard
+            </Link>
+          </div>
+        </AppLayout>
+      </ProtectedRoute>
+    );
+  }
+
+  const resultsVisible = currentQuestion.show_result_to_student !== false;
+  const questionConfigured = isQuestionConfigured(currentQuestion, questionTestCases);
+  const languageLabel = currentQuestion.language === "java" ? "Java 15" : "Python 3.10";
+
   return (
     <ProtectedRoute>
-      <AppLayout>
-        {/* Breadcrumb Navigation */}
+      <AppLayout hideNavbar={isStudent}>
+        {!isTeacher && (
+          <ExamWindowGuard
+            examTitle={exam.title}
+            onViolation={(count) =>
+              addLog(
+                "WARN",
+                user?.full_name || "Student",
+                `Left the exam window during "${exam.title}" (warning ${count})`
+              )
+            }
+          />
+        )}
+
         <nav aria-label="Breadcrumb" className="mb-3">
           <ol className="flex items-center gap-2 text-xs text-slate-500 font-medium">
             <li>
@@ -249,47 +474,54 @@ export default function ExamWorkspacePage() {
           </ol>
         </nav>
 
-        {/* Top Control Bar */}
         <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4 mb-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider font-mono">
-              Problems:
-            </span>
-            <div className="flex items-center gap-1.5">
-              {questions.map((q, idx) => (
-                <button
-                  key={q.id}
-                  onClick={() => selectQuestion(idx)}
-                  className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 ${
-                    currentQIndex === idx
-                      ? "bg-slate-900 text-white shadow-xs"
-                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                  }`}
-                >
-                  <span>Q{idx + 1}</span>
-                  <span className="text-[10px] opacity-75 font-mono">({q.points}pt)</span>
-                </button>
-              ))}
-            </div>
+            <button
+              type="button"
+              onClick={() => setSidebarOpen((open) => !open)}
+              className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 border transition-all ${
+                sidebarOpen
+                  ? "bg-slate-900 text-white border-slate-900"
+                  : "bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200"
+              }`}
+              title={sidebarOpen ? "Hide question navigator" : "Show question navigator"}
+            >
+              {sidebarOpen ? (
+                <PanelRightClose className="w-3.5 h-3.5" />
+              ) : (
+                <PanelRightOpen className="w-3.5 h-3.5" />
+              )}
+              <span>{sidebarOpen ? "Hide Questions" : "Show Questions"}</span>
+            </button>
 
-            {/* Teacher Broadcast Widget Toggle */}
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider font-mono">
+              {answeredIds.length}/{questions.length} answered
+            </span>
+
+            {isTeacher && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold uppercase tracking-wider font-mono">
+                <ShieldCheck className="w-3 h-3" />
+                Teacher preview
+              </span>
+            )}
+
             {isTeacher && (
               <button
+                type="button"
                 onClick={() => setShowBroadcastWidget(!showBroadcastWidget)}
-                className={`ml-2 px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 border transition-all ${
+                className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 border transition-all ${
                   showBroadcastWidget
                     ? "bg-orange-500 text-white border-orange-500 shadow-xs"
                     : "bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100"
                 }`}
               >
                 <Megaphone className="w-3.5 h-3.5" />
-                <span>Instructor Broadcast Tool</span>
+                <span>Broadcast Tool</span>
               </button>
             )}
           </div>
 
-          <div className="flex items-center gap-3 w-full md:w-auto justify-end flex-wrap">
-            {/* Timer */}
+          <div className="flex items-center gap-2 w-full md:w-auto justify-end flex-wrap">
             <div
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono font-bold border ${
                 timeLeft < 300
@@ -301,117 +533,28 @@ export default function ExamWorkspacePage() {
               <span>Time Left: {formatTime(timeLeft)}</span>
             </div>
 
-            {/* Language Selection */}
-            <select
-              value={language}
-              onChange={(e) => setLanguage(e.target.value)}
-              className="text-xs font-semibold py-1.5 px-3 bg-slate-50 border border-slate-200 rounded text-slate-700 focus:outline-none focus:ring-2 focus:ring-orange-500"
-            >
-              <option value="java">Java 15.0.2</option>
-              <option value="python">Python 3.10</option>
-            </select>
-
-            {/* Run Test Button */}
             <button
+              type="button"
               onClick={handleRunSample}
               disabled={isRunningSample}
               className="px-3.5 py-2 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors flex items-center gap-1.5 border border-slate-200 disabled:opacity-50"
             >
               <Play className="w-3 h-3 text-slate-600 fill-slate-600" />
-              <span>{isRunningSample ? "Running..." : "Run Test"}</span>
+              <span>{isRunningSample ? "Running..." : "Run Sample"}</span>
             </button>
 
-            {/* Prominent Orange Submission Button */}
             <button
-              onClick={handleSubmitSolution}
-              disabled={isSubmitting}
+              type="button"
+              onClick={() => setReviewOpen(true)}
+              disabled={isSubmittingExam}
               className="px-5 py-2 rounded bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white text-xs font-bold shadow-sm transition-all flex items-center gap-2 disabled:opacity-50"
             >
               <Send className="w-3.5 h-3.5" />
-              <span>{isSubmitting ? "Submitting..." : "Submit Solution"}</span>
+              <span>Submit Test</span>
             </button>
           </div>
         </div>
 
-        {/* Complete test question navigator */}
-        {questions.length > 0 && (
-          <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4 mb-4 space-y-2">
-            <div className="flex flex-col sm:flex-row sm:items-center items-start justify-between gap-1">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 font-mono flex items-center gap-1.5">
-                <ListChecks className="w-3.5 h-3.5 text-orange-500" />
-                All Test Questions
-              </span>
-              <span className="text-[10px] text-slate-400 font-mono">
-                {questions.length} total • click any question to check it
-              </span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
-              {questions.map((q, idx) => {
-                const isActive = currentQIndex === idx;
-                return (
-                  <button
-                    key={q.id}
-                    onClick={() => selectQuestion(idx)}
-                    className={`text-left p-2.5 rounded border transition-all flex items-start gap-2 ${
-                      isActive
-                        ? "border-orange-400 bg-orange-50/60 shadow-xs"
-                        : "border-slate-200 bg-slate-50 hover:bg-slate-100"
-                    }`}
-                  >
-                    <span
-                      className={`text-[10px] font-bold font-mono px-1.5 py-0.5 rounded shrink-0 ${
-                        isActive ? "bg-orange-500 text-white" : "bg-slate-900 text-white"
-                      }`}
-                    >
-                      Q{idx + 1}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-[11px] font-bold text-slate-800 truncate">
-                        {q.title}
-                      </span>
-                      <span className="block text-[10px] font-mono text-slate-400">
-                        {q.points} pts • {q.question_type}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Submission notification link if submitted */}
-        {recentSubmissionId && (
-          <div className="mb-4 p-3.5 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between text-xs text-emerald-900 shadow-xs">
-            <div className="flex items-center gap-2 font-medium">
-              {resultsVisible ? (
-                <CheckCircle className="w-4 h-4 text-emerald-600" />
-              ) : (
-                <Lock className="w-4 h-4 text-slate-500" />
-              )}
-              <span>
-                Submission <strong>#{recentSubmissionId}</strong> received.
-                {resultsVisible
-                  ? " It is queued for automated grading."
-                  : " Final result visibility is disabled for this question by the instructor."}
-              </span>
-            </div>
-            {resultsVisible ? (
-              <Link
-                href={`/student/submissions/${recentSubmissionId}`}
-                className="font-bold underline text-emerald-700 hover:text-emerald-900 flex items-center gap-1"
-              >
-                View Results Breakdown <ExternalLink className="w-3 h-3" />
-              </Link>
-            ) : (
-              <span className="text-[10px] font-mono font-bold uppercase text-slate-500 flex items-center gap-1">
-                <Lock className="w-3 h-3" /> Results hidden
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* Teacher Announcements Broadcast Widget */}
         {isTeacher && showBroadcastWidget && (
           <div className="bg-white rounded-lg border-2 border-orange-400 shadow-md p-5 mb-5 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -433,7 +576,7 @@ export default function ExamWorkspacePage() {
                     type="text"
                     required
                     value={broadcastTitle}
-                    onChange={(e) => setBroadcastTitle(e.target.value)}
+                    onChange={(event) => setBroadcastTitle(event.target.value)}
                     placeholder="Announcement Title / Headline"
                     className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500 font-medium"
                   />
@@ -441,7 +584,9 @@ export default function ExamWorkspacePage() {
                 <div>
                   <select
                     value={broadcastPriority}
-                    onChange={(e) => setBroadcastPriority(e.target.value as any)}
+                    onChange={(event) =>
+                      setBroadcastPriority(event.target.value as "urgent" | "warning" | "info")
+                    }
                     className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500 font-medium"
                   >
                     <option value="urgent">Urgent Priority</option>
@@ -451,19 +596,17 @@ export default function ExamWorkspacePage() {
                 </div>
               </div>
 
-              {/* Simple Text Area */}
               <div>
                 <textarea
                   rows={2}
                   required
                   value={broadcastMessage}
-                  onChange={(e) => setBroadcastMessage(e.target.value)}
+                  onChange={(event) => setBroadcastMessage(event.target.value)}
                   placeholder="Type real-time announcement to all active exam candidates..."
                   className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500 font-medium resize-none"
                 />
               </div>
 
-              {/* Prominent Orange Broadcast Button */}
               <div className="flex justify-end">
                 <button
                   type="submit"
@@ -475,19 +618,20 @@ export default function ExamWorkspacePage() {
               </div>
             </form>
 
-            {/* Read-only chronological log of previously sent messages below input */}
             <div className="pt-3 border-t border-slate-100 space-y-2">
               <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 font-mono block">
                 Chronological Broadcast Log
               </span>
               <div className="max-h-36 overflow-y-auto divide-y divide-slate-100 bg-slate-50 rounded border border-slate-200 p-2">
-                {announcements.map((a) => (
-                  <div key={a.id} className="py-2 px-1 text-xs space-y-0.5">
+                {announcements.map((announcement) => (
+                  <div key={announcement.id} className="py-2 px-1 text-xs space-y-0.5">
                     <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
-                      <span className="font-bold text-slate-700 uppercase">{a.title}</span>
-                      <span>{new Date(a.created_at).toLocaleTimeString()}</span>
+                      <span className="font-bold text-slate-700 uppercase">
+                        {announcement.title}
+                      </span>
+                      <span>{new Date(announcement.created_at).toLocaleTimeString()}</span>
                     </div>
-                    <p className="text-slate-600 text-[11px]">{a.message}</p>
+                    <p className="text-slate-600 text-[11px]">{announcement.message}</p>
                   </div>
                 ))}
               </div>
@@ -495,159 +639,268 @@ export default function ExamWorkspacePage() {
           </div>
         )}
 
-        {/* Main Split-Screen Coding Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          {/* Left Column: Problem Requirements, Allowed Languages & Limits */}
-          <div className="lg:col-span-5 bg-white rounded-lg border border-slate-200 shadow-sm p-5 space-y-4 flex flex-col justify-between">
-            <div className="space-y-4">
-              {/* Question Header & Constraints */}
-              <div className="border-b border-slate-100 pb-3">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono">
-                    Problem {currentQIndex + 1} of {questions.length}
-                  </span>
-                  <span className="text-xs font-bold text-orange-600 font-mono bg-orange-50 px-2 py-0.5 rounded border border-orange-200">
-                    {currentQuestion.points} Points
-                  </span>
-                </div>
-                <h2 className="text-base font-bold text-slate-900">
-                  {currentQuestion.title}
-                </h2>
-              </div>
+        {submittedCount > 0 && !submitted && (
+          <div className="mb-4 p-3.5 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-900 shadow-xs">
+            Submission received. Results are being calculated; open your test result to inspect
+            the question score breakdown.
+          </div>
+        )}
 
-              {/* Limits and Allowed Languages */}
-              <div className="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded border border-slate-200 font-mono text-slate-600">
-                <div>
-                  <span className="text-[10px] text-slate-400 block font-bold">ALLOWED LANGUAGES:</span>
-                  <span className="font-semibold text-slate-800">Java 15, Python 3</span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-400 block font-bold">MEMORY LIMIT:</span>
-                  <span className="font-semibold text-slate-800">{currentQuestion.memory_limit} MB</span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-400 block font-bold">TIME LIMIT:</span>
-                  <span className="font-semibold text-slate-800">{currentQuestion.time_limit}.0 Seconds</span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-400 block font-bold">QUESTION TYPE:</span>
-                  <span className="font-semibold text-slate-800">{currentQuestion.question_type}</span>
-                </div>
-              </div>
+        {submitError && (
+          <div className="mb-4 p-3.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 shadow-xs flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            {submitError}
+          </div>
+        )}
 
-              {/* Problem Description */}
-              <MarkdownRenderer content={currentQuestion.description} />
+        {!questionConfigured && (
+          <div className="mb-4 p-3.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 shadow-xs flex items-start gap-2">
+            <FileWarning className="w-4 h-4 shrink-0 mt-0.5" />
+            <div>
+              <strong className="block">This question is missing grading answers.</strong>
+              <span>
+                No test cases or expected answers were found in the database. Submissions for this
+                question will be reported as a grading error and will not receive a score.
+              </span>
+            </div>
+          </div>
+        )}
 
-              {/* Java Reflection Spec if applicable */}
-              {currentQuestion.question_type === "JAVA_CLASS_METHOD" && (
-                <div className="p-3 bg-slate-50 rounded border border-slate-200 space-y-1.5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono block">
-                    Required Class/Method Contract:
-                  </span>
-                  <div className="grid grid-cols-2 gap-1 text-[11px] font-mono">
-                    <div>Class: <strong className="text-slate-900">{currentQuestion.class_name}</strong></div>
-                    <div>Method: <strong className="text-slate-900">{currentQuestion.method_name}</strong></div>
-                    <div>Mode: <span className="text-slate-700">{currentQuestion.method_mode}</span></div>
-                    <div>Return: <span className="text-slate-700">{currentQuestion.return_type}</span></div>
+        <div className="flex flex-col xl:flex-row gap-4 items-start">
+          <div className="flex-1 min-w-0 w-full space-y-4">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+              <div className="lg:col-span-5 bg-white rounded-lg border border-slate-200 shadow-sm p-5 space-y-4 flex flex-col justify-between">
+                <div className="space-y-4">
+                  <div className="border-b border-slate-100 pb-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono">
+                        Problem {currentQIndex + 1} of {questions.length}
+                      </span>
+                      <span className="text-xs font-bold text-orange-600 font-mono bg-orange-50 px-2 py-0.5 rounded border border-orange-200">
+                        {currentQuestion.points} Points
+                      </span>
+                    </div>
+                    <h2 className="text-base font-bold text-slate-900">{currentQuestion.title}</h2>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded border border-slate-200 font-mono text-slate-600">
+                    <div>
+                      <span className="text-[10px] text-slate-400 block font-bold">
+                        INSTRUCTOR-SELECTED LANGUAGE:
+                      </span>
+                      <span className="font-semibold text-slate-800">{languageLabel}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 block font-bold">TIME LIMIT:</span>
+                      <span className="font-semibold text-slate-800">
+                        {currentQuestion.time_limit}.0 Seconds
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 block font-bold">
+                        QUESTION TYPE:
+                      </span>
+                      <span className="font-semibold text-slate-800">
+                        {currentQuestion.question_type}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 block font-bold">
+                        RESULT VISIBILITY:
+                      </span>
+                      <span className="font-semibold text-slate-800">
+                        {resultsVisible ? "Visible to student" : "Hidden by instructor"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <MarkdownRenderer content={currentQuestion.description} />
+
+                  {currentQuestion.question_type === "JAVA_CLASS_METHOD" && (
+                    <div className="p-3 bg-slate-50 rounded border border-slate-200 space-y-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono block">
+                        Required Class/Method Contract:
+                      </span>
+                      <div className="grid grid-cols-2 gap-1 text-[11px] font-mono">
+                        <div>
+                          Class:{" "}
+                          <strong className="text-slate-900">{currentQuestion.class_name}</strong>
+                        </div>
+                        <div>
+                          Method:{" "}
+                          <strong className="text-slate-900">{currentQuestion.method_name}</strong>
+                        </div>
+                        <div>
+                          Mode: <span className="text-slate-700">{currentQuestion.method_mode}</span>
+                        </div>
+                        <div>
+                          Return:{" "}
+                          <span className="text-slate-700">{currentQuestion.return_type}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="space-y-2 pt-2 border-t border-slate-100">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono block">
+                      Sample Test Cases (Visible)
+                    </span>
+                    {questionTestCases.filter((testCase) => testCase.is_sample).length === 0 && (
+                      <p className="text-[11px] text-slate-400 italic">
+                        No sample test cases were provided for this question.
+                      </p>
+                    )}
+                    {questionTestCases
+                      .filter((testCase) => testCase.is_sample)
+                      .map((testCase, index) => (
+                        <div
+                          key={testCase.id}
+                          className="p-2.5 rounded bg-slate-50 border border-slate-200 text-xs font-mono space-y-1"
+                        >
+                          <div className="text-[10px] font-bold text-slate-500 flex justify-between">
+                            <span>Sample #{index + 1}</span>
+                            <span>{testCase.weight} Pts</span>
+                          </div>
+                          {testCase.stdin && (
+                            <div>
+                              <span className="text-[10px] text-slate-400 block">Input:</span>
+                              <pre className="p-1.5 bg-white border border-slate-200 rounded text-[11px]">
+                                {testCase.stdin}
+                              </pre>
+                            </div>
+                          )}
+                          {testCase.expected_stdout && (
+                            <div>
+                              <span className="text-[10px] text-slate-400 block">
+                                Expected Output:
+                              </span>
+                              <pre className="p-1.5 bg-white border border-slate-200 rounded text-[11px]">
+                                {testCase.expected_stdout}
+                              </pre>
+                            </div>
+                          )}
+                          {testCase.arguments && (
+                            <div>
+                              <span className="text-[10px] text-slate-400 block">Args:</span>
+                              <pre className="p-1.5 bg-white border border-slate-200 rounded text-[11px]">
+                                {testCase.arguments}
+                              </pre>
+                            </div>
+                          )}
+                          {testCase.expected_return && (
+                            <div>
+                              <span className="text-[10px] text-slate-400 block">
+                                Expected Return:
+                              </span>
+                              <pre className="p-1.5 bg-white border border-slate-200 rounded text-[11px]">
+                                {testCase.expected_return}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      ))}
                   </div>
                 </div>
-              )}
+              </div>
 
-              {/* Sample Test Cases */}
-              <div className="space-y-2 pt-2 border-t border-slate-100">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono block">
-                  Sample Test Cases (Visible)
-                </span>
-                {testCases
-                  .filter((tc) => tc.is_sample)
-                  .map((tc, i) => (
-                    <div key={tc.id} className="p-2.5 rounded bg-slate-50 border border-slate-200 text-xs font-mono space-y-1">
-                      <div className="text-[10px] font-bold text-slate-500 flex justify-between">
-                        <span>Sample #{i + 1}</span>
-                        <span>{tc.weight} Pts</span>
-                      </div>
-                      {tc.stdin && (
-                        <div>
-                          <span className="text-[10px] text-slate-400 block">Input:</span>
-                          <pre className="p-1.5 bg-white border border-slate-200 rounded text-[11px]">{tc.stdin}</pre>
-                        </div>
-                      )}
-                      {tc.expected_stdout && (
-                        <div>
-                          <span className="text-[10px] text-slate-400 block">Expected Output:</span>
-                          <pre className="p-1.5 bg-white border border-slate-200 rounded text-[11px]">{tc.expected_stdout}</pre>
-                        </div>
-                      )}
-                      {tc.arguments && (
-                        <div>
-                          <span className="text-[10px] text-slate-400 block">Args:</span>
-                          <pre className="p-1.5 bg-white border border-slate-200 rounded text-[11px]">{tc.arguments}</pre>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+              <div className="lg:col-span-7 flex flex-col space-y-4">
+                <div className="bg-slate-900 rounded-lg border border-slate-800 shadow-md flex flex-col h-[420px] overflow-hidden">
+                  <div className="px-4 py-2 bg-slate-950 border-b border-slate-800 flex items-center justify-between text-xs text-slate-400">
+                    <span className="font-mono text-slate-200 font-semibold flex items-center gap-1.5">
+                      <Code2 className="w-3.5 h-3.5 text-orange-400" />
+                      Solution.{currentQuestion.language === "java" ? "java" : "py"}
+                      <span className="ml-1 rounded bg-slate-800 px-1.5 py-0.5 text-[9px] uppercase text-slate-400">
+                        {languageLabel} selected by instructor
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleResetCode}
+                      className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white transition-colors"
+                      title="Reset to the instructor-provided starter template"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      Reset
+                    </button>
+                  </div>
+
+                  <div className="flex-1 relative">
+                    <textarea
+                      value={currentCode}
+                      onChange={(event) => updateCode(event.target.value)}
+                      spellCheck={false}
+                      className="w-full h-full p-4 bg-transparent text-slate-100 font-mono text-xs leading-relaxed focus:outline-none resize-none selection:bg-orange-500/30"
+                      placeholder="// Enter your solution here..."
+                    />
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4 space-y-2">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono flex items-center gap-1.5">
+                      <Terminal className="w-3.5 h-3.5 text-slate-600" />
+                      Execution Console & Diagnostics
+                    </span>
+                    {consoleStatus === "success" && (
+                      <span className="text-[10px] font-bold text-emerald-600 font-mono uppercase">
+                        Sample Tests Passed
+                      </span>
+                    )}
+                    {consoleStatus === "error" && (
+                      <span className="text-[10px] font-bold text-red-600 font-mono uppercase">
+                        Check Sample Output
+                      </span>
+                    )}
+                  </div>
+
+                  <pre className="p-3 bg-slate-50 rounded border border-slate-200 font-mono text-[11px] text-slate-700 min-h-[70px] max-h-[160px] overflow-y-auto whitespace-pre-wrap">
+                    {consoleOutput || (
+                      <span className="text-slate-400 italic">
+                        Click &quot;Run Sample&quot; to test your saved answer against the visible
+                        sample cases. Only passing test cases receive points.
+                      </span>
+                    )}
+                  </pre>
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Right Column: Browser-Based Code Editor & Console */}
-          <div className="lg:col-span-7 flex flex-col space-y-4">
-            {/* Editor Container */}
-            <div className="bg-slate-900 rounded-lg border border-slate-800 shadow-md flex flex-col h-[420px] overflow-hidden">
-              <div className="px-4 py-2 bg-slate-950 border-b border-slate-800 flex items-center justify-between text-xs text-slate-400">
-                <span className="font-mono text-slate-200 font-semibold flex items-center gap-1.5">
-                  <Code2 className="w-3.5 h-3.5 text-orange-400" />
-                  Solution.{language === "java" ? "java" : "py"}
-                </span>
-                <button
-                  onClick={() => {
-                    const qType = currentQuestion.question_type;
-                    setCode(CODE_TEMPLATES[language]?.[qType] || CODE_TEMPLATES["java"]["STDIN_STDOUT"]);
-                  }}
-                  className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white transition-colors"
-                  title="Reset to default starter template"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  Reset
-                </button>
-              </div>
-
-              {/* Code Textarea */}
-              <div className="flex-1 relative">
-                <textarea
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  spellCheck={false}
-                  className="w-full h-full p-4 bg-transparent text-slate-100 font-mono text-xs leading-relaxed focus:outline-none resize-none selection:bg-orange-500/30"
-                  placeholder="// Enter your solution here..."
-                />
-              </div>
-            </div>
-
-            {/* Test Console Output */}
-            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4 space-y-2">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono flex items-center gap-1.5">
-                  <Terminal className="w-3.5 h-3.5 text-slate-600" />
-                  Execution Console & Diagnostics
-                </span>
-                {consoleStatus === "success" && (
-                  <span className="text-[10px] font-bold text-emerald-600 font-mono uppercase">
-                    Execution Passed
-                  </span>
-                )}
-              </div>
-
-              <pre className="p-3 bg-slate-50 rounded border border-slate-200 font-mono text-[11px] text-slate-700 min-h-[70px] max-h-[140px] overflow-y-auto whitespace-pre-wrap">
-                {consoleOutput || (
-                  <span className="text-slate-400 italic">
-                    Click "Run Test" above to test your code against visible sample inputs.
-                  </span>
-                )}
-              </pre>
-            </div>
-          </div>
+          {sidebarOpen && (
+            <QuestionSidebar
+              questions={questions}
+              currentIndex={currentQIndex}
+              answeredIds={answeredIds}
+              testCases={allTestCases}
+              isSubmitting={isSubmittingExam}
+              onSelect={selectQuestion}
+              onReviewSubmit={() => setReviewOpen(true)}
+              onClose={() => setSidebarOpen(false)}
+            />
+          )}
         </div>
+
+        <div className="mt-5 flex items-center justify-end border-t border-slate-200 pt-4">
+          <button
+            type="button"
+            onClick={() => setReviewOpen(true)}
+            className="px-5 py-2 rounded bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold shadow-sm transition-all flex items-center gap-2"
+          >
+            <Send className="w-3.5 h-3.5" />
+            Review & Submit Test
+          </button>
+        </div>
+
+        <SubmitReviewModal
+          isOpen={reviewOpen}
+          examTitle={exam.title}
+          questions={questions}
+          answers={answers}
+          testCases={allTestCases}
+          isSubmitting={isSubmittingExam}
+          onClose={() => setReviewOpen(false)}
+          onConfirm={handleConfirmSubmit}
+        />
       </AppLayout>
     </ProtectedRoute>
   );

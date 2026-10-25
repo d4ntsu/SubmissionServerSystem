@@ -49,6 +49,21 @@ async def grade_submission(submission_id: int) -> None:
             _fail_submission(db, submission, "No test cases configured for this question")
             return
 
+        missing_answers = [
+            index
+            for index, test_case in enumerate(test_cases, start=1)
+            if not (test_case.expected_output or "").strip()
+        ]
+        if missing_answers:
+            missing_list = ", ".join(f"#{index}" for index in missing_answers)
+            _fail_submission(
+                db,
+                submission,
+                f"Test case {missing_list} has no expected answer configured; "
+                "the submission cannot be graded logically.",
+            )
+            return
+
         if question.question_type == QuestionType.stdio:
             await _grade_stdio(db, submission, question, test_cases)
         else:

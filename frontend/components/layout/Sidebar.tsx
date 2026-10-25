@@ -69,6 +69,11 @@ export function Sidebar({ isOpen }: SidebarProps) {
     if (path === "/dashboard") {
       return pathname === "/dashboard" || pathname === "/";
     }
+    if (path === "/student/submissions") {
+      return (
+        pathname.startsWith(path) || pathname.startsWith("/student/results")
+      );
+    }
     return pathname.startsWith(path);
   };
 

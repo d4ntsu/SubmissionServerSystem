@@ -22,6 +22,23 @@ export default function ExamsListPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
+  const launchExamWindow = (examId: number) => {
+    const width = 1280;
+    const height = 900;
+    const left = Math.max(0, Math.round((window.screen.width - width) / 2));
+    const top = Math.max(0, Math.round((window.screen.height - height) / 2));
+    const popup = window.open(
+      `/student/exams/${examId}?secure=1`,
+      `exam_window_${examId}`,
+      `popup=yes,width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
+    );
+    if (popup) {
+      popup.focus();
+    } else {
+      window.location.href = `/student/exams/${examId}`;
+    }
+  };
+
   const filtered = MOCK_EXAMS.filter((exam) => {
     const matchesSearch =
       exam.title.toLowerCase().includes(search.toLowerCase()) ||
@@ -131,14 +148,22 @@ export default function ExamsListPage() {
                   </div>
 
                   <div className="p-4 bg-slate-50 dark:bg-slate-800/40 border-t border-slate-100 dark:border-slate-800">
-                    {isActive || isTeacher ? (
+                    {isTeacher ? (
                       <Link
                         href={`/student/exams/${exam.id}`}
                         className="w-full py-2 px-4 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center justify-center gap-1.5"
                       >
-                        <span>{isActive ? "Launch Exam Workspace" : "Preview Exam Room"}</span>
+                        <span>Preview Exam Room</span>
                         <ArrowRight className="w-3.5 h-3.5" />
                       </Link>
+                    ) : isActive ? (
+                      <button
+                        onClick={() => launchExamWindow(exam.id)}
+                        className="w-full py-2 px-4 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center justify-center gap-1.5"
+                      >
+                        <span>Launch Secure Exam Window</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
                     ) : (
                       <div className="text-center text-xs text-slate-400 font-medium py-1">
                         {isUpcoming ? "Opens upon instructor start" : "Submission period closed"}

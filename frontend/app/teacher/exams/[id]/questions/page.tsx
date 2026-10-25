@@ -7,7 +7,7 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { MarkdownRenderer } from "@/components/markdown/MarkdownRenderer";
 import { useSocket } from "@/lib/socket-context";
-import { Question, TestCase, QuestionType, ExamStatus } from "@/types";
+import { CodingLanguage, Question, TestCase, QuestionType, ExamStatus } from "@/types";
 import {
   FileCode2,
   Plus,
@@ -28,6 +28,7 @@ import {
   HelpCircle,
   Eye,
   EyeOff,
+  AlertTriangle,
 } from "lucide-react";
 
 export default function TeacherQuestionsManagementPage() {
@@ -55,8 +56,8 @@ export default function TeacherQuestionsManagementPage() {
   const [qDesc, setQDesc] = useState("");
   const [qPoints, setQPoints] = useState(30);
   const [qType, setQType] = useState<QuestionType>("STDIN_STDOUT");
+  const [qLanguage, setQLanguage] = useState<CodingLanguage>("java");
   const [qTimeLimit, setQTimeLimit] = useState(2);
-  const [qMemoryLimit, setQMemoryLimit] = useState(256);
   const [qShowResult, setQShowResult] = useState(true);
   // Java class/method specs
   const [qClassName, setQClassName] = useState("Solution");
@@ -74,6 +75,7 @@ export default function TeacherQuestionsManagementPage() {
   const [tcExpectedStdout, setTcExpectedStdout] = useState("");
   const [tcArgs, setTcArgs] = useState("");
   const [tcExpectedReturn, setTcExpectedReturn] = useState("");
+  const [tcError, setTcError] = useState("");
 
   const openAddQuestion = () => {
     setEditingQuestion(null);
@@ -81,8 +83,8 @@ export default function TeacherQuestionsManagementPage() {
     setQDesc("");
     setQPoints(30);
     setQType("STDIN_STDOUT");
+    setQLanguage("java");
     setQTimeLimit(2);
-    setQMemoryLimit(256);
     setQShowResult(true);
     setQClassName("Solution");
     setQMethodName("solve");
@@ -98,8 +100,8 @@ export default function TeacherQuestionsManagementPage() {
     setQDesc(q.description);
     setQPoints(q.points);
     setQType(q.question_type);
+    setQLanguage(q.language || "java");
     setQTimeLimit(q.time_limit);
-    setQMemoryLimit(q.memory_limit);
     setQShowResult(q.show_result_to_student ?? true);
     setQClassName(q.class_name || "Solution");
     setQMethodName(q.method_name || "solve");
@@ -119,8 +121,8 @@ export default function TeacherQuestionsManagementPage() {
         description: qDesc,
         points: Number(qPoints),
         question_type: qType,
+        language: qType === "JAVA_CLASS_METHOD" ? "java" : qLanguage,
         time_limit: Number(qTimeLimit),
-        memory_limit: Number(qMemoryLimit),
         show_result_to_student: qShowResult,
         class_name: qType === "JAVA_CLASS_METHOD" ? qClassName : null,
         method_name: qType === "JAVA_CLASS_METHOD" ? qMethodName : null,
@@ -134,8 +136,8 @@ export default function TeacherQuestionsManagementPage() {
         description: qDesc,
         points: Number(qPoints),
         question_type: qType,
+        language: qType === "JAVA_CLASS_METHOD" ? "java" : qLanguage,
         time_limit: Number(qTimeLimit),
-        memory_limit: Number(qMemoryLimit),
         show_result_to_student: qShowResult,
         class_name: qType === "JAVA_CLASS_METHOD" ? qClassName : null,
         method_name: qType === "JAVA_CLASS_METHOD" ? qMethodName : null,
@@ -156,12 +158,31 @@ export default function TeacherQuestionsManagementPage() {
     setTcExpectedStdout("");
     setTcArgs("");
     setTcExpectedReturn("");
+    setTcError("");
     setIsTestCaseModalOpen(true);
   };
+
+  const activeTestCaseQuestion = examQuestions.find(
+    (question) => question.id === activeQuestionIdForTc
+  );
 
   const handleSaveTestCase = (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeQuestionIdForTc) return;
+
+    const expected =
+      activeTestCaseQuestion?.question_type === "JAVA_CLASS_METHOD"
+        ? tcExpectedReturn.trim()
+        : tcExpectedStdout.trim();
+
+    if (!expected) {
+      setTcError(
+        activeTestCaseQuestion?.question_type === "JAVA_CLASS_METHOD"
+          ? "The expected return value is required. Without it the grader cannot detect a wrong answer."
+          : "The expected output is required. Without it the grader cannot detect a wrong answer."
+      );
+      return;
+    }
 
     createTestCase(activeQuestionIdForTc, {
       is_sample: tcIsSample,
@@ -338,7 +359,7 @@ export default function TeacherQuestionsManagementPage() {
                       {/* Resource limits */}
                       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-slate-50 p-2.5 rounded border border-slate-200 font-mono text-[11px] text-slate-600">
                         <div>Time Limit: <strong className="text-slate-800">{question.time_limit}s</strong></div>
-                        <div>Memory Limit: <strong className="text-slate-800">{question.memory_limit}MB</strong></div>
+                        <div>Language: <strong className="text-slate-800 uppercase">{question.language}</strong></div>
                         <div>Sample Tests: <strong className="text-slate-800">{sampleCount}</strong></div>
                         <div>Hidden Tests: <strong className="text-slate-800">{hiddenCount}</strong></div>
                         <div>
@@ -348,6 +369,30 @@ export default function TeacherQuestionsManagementPage() {
                           </strong>
                         </div>
                       </div>
+
+                      {(() => {
+                        const hasMissingAnswer =
+                          qTestCases.length === 0 ||
+                          qTestCases.some((testCase) =>
+                            question.question_type === "JAVA_CLASS_METHOD"
+                              ? !testCase.expected_return?.trim()
+                              : !testCase.expected_stdout?.trim()
+                          );
+                        if (!hasMissingAnswer) return null;
+                        return (
+                          <div className="rounded border border-amber-200 bg-amber-50 p-2.5 text-[11px] text-amber-800 flex items-start gap-2">
+                            <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                            <div>
+                              <strong className="block">Logical grading is incomplete</strong>
+                              <span>
+                                {qTestCases.length === 0
+                                  ? "No test cases are configured. Student submissions will fail with a grading error."
+                                  : "One or more test cases have no expected answer. Those answers must be added before wrong submissions can be scored correctly."}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* Java Class / Method contract if applicable */}
                       {question.question_type === "JAVA_CLASS_METHOD" && (
@@ -530,7 +575,10 @@ export default function TeacherQuestionsManagementPage() {
 
                     <button
                       type="button"
-                      onClick={() => setQType("JAVA_CLASS_METHOD")}
+                      onClick={() => {
+                        setQType("JAVA_CLASS_METHOD");
+                        setQLanguage("java");
+                      }}
                       className={`p-3 rounded border text-left transition-all ${
                         qType === "JAVA_CLASS_METHOD"
                           ? "border-orange-500 bg-orange-50/50 shadow-xs"
@@ -546,6 +594,25 @@ export default function TeacherQuestionsManagementPage() {
                       </p>
                     </button>
                   </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
+                    Programming Language (locked for students) *
+                  </label>
+                  <select
+                    value={qType === "JAVA_CLASS_METHOD" ? "java" : qLanguage}
+                    onChange={(e) => setQLanguage(e.target.value as CodingLanguage)}
+                    disabled={qType === "JAVA_CLASS_METHOD"}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded text-slate-900 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono disabled:opacity-70"
+                  >
+                    <option value="java">Java 15.0.2</option>
+                    <option value="python">Python 3.10</option>
+                  </select>
+                  <p className="mt-1 text-[10px] text-slate-400">
+                    The student cannot change the language during the test. Java class/method
+                    questions always use Java.
+                  </p>
                 </div>
 
                 {/* Java Method Spec Fields if JAVA_CLASS_METHOD */}
@@ -604,35 +671,23 @@ export default function TeacherQuestionsManagementPage() {
                 )}
 
                 {/* Resource Limits */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
-                      CPU Time Limit (Seconds) *
-                    </label>
-                    <input
-                      type="number"
-                      required
-                      min={1}
-                      max={10}
-                      value={qTimeLimit}
-                      onChange={(e) => setQTimeLimit(Number(e.target.value))}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded text-slate-900 font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
-                      RAM Memory Limit (MB) *
-                    </label>
-                    <input
-                      type="number"
-                      required
-                      min={64}
-                      max={1024}
-                      value={qMemoryLimit}
-                      onChange={(e) => setQMemoryLimit(Number(e.target.value))}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded text-slate-900 font-mono"
-                    />
-                  </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
+                    CPU Time Limit (Seconds) *
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min={1}
+                    max={10}
+                    value={qTimeLimit}
+                    onChange={(e) => setQTimeLimit(Number(e.target.value))}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded text-slate-900 font-mono"
+                  />
+                  <p className="mt-1 text-[10px] text-slate-400">
+                    Memory limits are managed automatically by the execution sandbox and are no
+                    longer configured per question.
+                  </p>
                 </div>
 
                 {/* Result Visibility */}
@@ -755,38 +810,82 @@ export default function TeacherQuestionsManagementPage() {
                   />
                 </div>
 
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
-                    Standard Input (Stdin) / Method Arguments
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={tcStdin || tcArgs}
-                    onChange={(e) => {
-                      setTcStdin(e.target.value);
-                      setTcArgs(e.target.value);
-                    }}
-                    placeholder="Input fed to stdin or method arguments (e.g. 5\n10 or 'add', 5, 10)"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded font-mono text-xs"
-                  />
-                </div>
+                {activeTestCaseQuestion?.question_type === "JAVA_CLASS_METHOD" ? (
+                  <>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
+                        Method Arguments
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={tcArgs}
+                        onChange={(e) => {
+                          setTcArgs(e.target.value);
+                          setTcError("");
+                        }}
+                        placeholder="Arguments passed to the method (e.g. 5, 10)"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded font-mono text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
+                        Expected Return Value *
+                      </label>
+                      <textarea
+                        rows={2}
+                        required
+                        value={tcExpectedReturn}
+                        onChange={(e) => {
+                          setTcExpectedReturn(e.target.value);
+                          setTcError("");
+                        }}
+                        placeholder="Expected return value (e.g. 15)"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded font-mono text-xs"
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
+                        Standard Input (Stdin)
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={tcStdin}
+                        onChange={(e) => {
+                          setTcStdin(e.target.value);
+                          setTcError("");
+                        }}
+                        placeholder="Input fed to stdin (e.g. 5\n10)"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded font-mono text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
+                        Expected Output (Stdout) *
+                      </label>
+                      <textarea
+                        rows={2}
+                        required
+                        value={tcExpectedStdout}
+                        onChange={(e) => {
+                          setTcExpectedStdout(e.target.value);
+                          setTcError("");
+                        }}
+                        placeholder="Expected standard output (e.g. 15)"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded font-mono text-xs"
+                      />
+                    </div>
+                  </>
+                )}
 
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
-                    Expected Output (Stdout) / Expected Return Value
-                  </label>
-                  <textarea
-                    rows={2}
-                    required
-                    value={tcExpectedStdout || tcExpectedReturn}
-                    onChange={(e) => {
-                      setTcExpectedStdout(e.target.value);
-                      setTcExpectedReturn(e.target.value);
-                    }}
-                    placeholder="Expected standard output or return value (e.g. 15)"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded font-mono text-xs"
-                  />
-                </div>
+                {tcError && (
+                  <div className="rounded border border-red-200 bg-red-50 p-2.5 text-[11px] text-red-700 flex items-start gap-2">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span>{tcError}</span>
+                  </div>
+                )}
 
                 <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
                   <button

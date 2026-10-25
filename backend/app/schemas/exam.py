@@ -11,6 +11,7 @@ class ExamCreate(BaseModel):
     start_time: datetime | None = None
     end_time: datetime | None = None
     duration_minutes: int | None = None
+    access_password: str | None = Field(default=None, max_length=128)
 
 
 class ExamUpdate(BaseModel):
@@ -20,6 +21,7 @@ class ExamUpdate(BaseModel):
     end_time: datetime | None = None
     duration_minutes: int | None = None
     status: ExamStatus | None = None
+    access_password: str | None = Field(default=None, max_length=128)
 
 
 class ExamResponse(BaseModel):
@@ -31,6 +33,15 @@ class ExamResponse(BaseModel):
     start_time: datetime | None = None
     end_time: datetime | None = None
     duration_minutes: int | None = None
+    has_password: bool = False
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+class ExamPasswordVerify(BaseModel):
+    password: str = Field(..., max_length=128)
+
+
+class ExamPasswordVerifyResponse(BaseModel):
+    valid: bool

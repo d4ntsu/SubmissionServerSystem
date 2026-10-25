@@ -45,6 +45,11 @@ export function Navbar() {
     if (href === "/dashboard") {
       return pathname === "/dashboard" || pathname === "/";
     }
+    if (href === "/student/submissions") {
+      return (
+        pathname.startsWith(href) || pathname.startsWith("/student/results")
+      );
+    }
     return pathname.startsWith(href);
   };
 

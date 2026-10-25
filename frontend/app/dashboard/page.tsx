@@ -16,11 +16,29 @@ import {
   Layers,
   ArrowRight,
   Award,
+  Lock,
 } from "lucide-react";
 
 export default function ExamDashboardPage() {
-  const { user } = useAuth();
+  const { user, isTeacher } = useAuth();
   const { exams } = useSocket();
+
+  const launchExamWindow = (examId: number) => {
+    const width = 1280;
+    const height = 900;
+    const left = Math.max(0, Math.round((window.screen.width - width) / 2));
+    const top = Math.max(0, Math.round((window.screen.height - height) / 2));
+    const popup = window.open(
+      `/student/exams/${examId}?secure=1`,
+      `exam_window_${examId}`,
+      `popup=yes,width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
+    );
+    if (popup) {
+      popup.focus();
+    } else {
+      window.location.href = `/student/exams/${examId}`;
+    }
+  };
 
   // Collapsible section states
   const [activeOpen, setActiveOpen] = useState(true);
@@ -110,6 +128,12 @@ export default function ExamDashboardPage() {
                           <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 font-mono">
                             Java & Data Structures
                           </span>
+                          {exam.has_password && (
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 font-mono flex items-center gap-1">
+                              <Lock className="w-2.5 h-2.5" />
+                              Password
+                            </span>
+                          )}
                           <span className="text-xs text-slate-400 font-mono flex items-center gap-1">
                             <Clock className="w-3 h-3" /> {exam.duration_minutes} Mins
                           </span>
@@ -130,13 +154,23 @@ export default function ExamDashboardPage() {
 
                     {/* Right-aligned action button in vibrant orange */}
                     <div className="shrink-0 self-end sm:self-center">
-                      <Link
-                        href={`/student/exams/${exam.id}`}
-                        className="inline-flex items-center gap-2 px-5 py-2.5 bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white font-bold text-xs rounded-md shadow-xs transition-colors"
-                      >
-                        <span>Enter Exam Room</span>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </Link>
+                      {isTeacher ? (
+                        <Link
+                          href={`/student/exams/${exam.id}`}
+                          className="inline-flex items-center gap-2 px-5 py-2.5 bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white font-bold text-xs rounded-md shadow-xs transition-colors"
+                        >
+                          <span>Open Exam Room</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </Link>
+                      ) : (
+                        <button
+                          onClick={() => launchExamWindow(exam.id)}
+                          className="inline-flex items-center gap-2 px-5 py-2.5 bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white font-bold text-xs rounded-md shadow-xs transition-colors"
+                        >
+                          <span>Enter Exam Room</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
