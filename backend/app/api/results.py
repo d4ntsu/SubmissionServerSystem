@@ -11,13 +11,41 @@ from app.services.dependencies import get_current_user, require_role
 router = APIRouter(prefix="/results", tags=["results"])
 
 
-def _sanitize_test_result(tr: SubmissionTestResult, is_student: bool) -> SubmissionTestResultResponse:
-    """Return a test result, hiding hidden-test data from students."""
+def _sanitize_test_result(
+    tr: SubmissionTestResult,
+    is_student: bool,
+    submission: Submission,
+    total_weight: float,
+) -> SubmissionTestResultResponse:
+    """Return a test result with expected/actual data, hiding hidden tests from students."""
     data = SubmissionTestResultResponse.model_validate(tr)
-    if is_student and tr.test_case and tr.test_case.is_hidden:
+    test_case = tr.test_case
+    is_hidden = bool(test_case and test_case.is_hidden)
+    data.is_sample = not is_hidden
+
+    if test_case:
+        weight = test_case.score_weight or 0.0
+        data.score_weight = weight
+        data.awarded_points = (
+            round((weight / total_weight) * submission.max_score, 2)
+            if tr.passed == 1 and total_weight
+            else 0.0
+        )
+        data.input_data = test_case.input_data
+        data.expected_output = test_case.expected_output
+        if tr.passed != 1:
+            data.message = (
+                "No expected answer is configured for this test case."
+                if not (test_case.expected_output or "").strip()
+                else "The produced output did not match the expected answer."
+            )
+
+    if is_student and is_hidden:
         data.stdout = None
         data.stderr = None
         data.compile_output = None
+        data.input_data = None
+        data.expected_output = None
     return data
 
 
@@ -35,10 +63,13 @@ def get_submission_result(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found")
 
     is_student = current_user.role == UserRole.student
+    total_weight = sum(
+        (tr.test_case.score_weight or 0) for tr in submission.test_results if tr.test_case
+    )
     return {
         "submission": SubmissionResponse.model_validate(submission),
         "test_results": [
-            _sanitize_test_result(tr, is_student)
+            _sanitize_test_result(tr, is_student, submission, total_weight)
             for tr in submission.test_results
         ],
     }
@@ -61,7 +92,16 @@ def get_exam_results(
         {
             "submission": SubmissionResponse.model_validate(sub),
             "test_results": [
-                SubmissionTestResultResponse.model_validate(tr)
+                _sanitize_test_result(
+                    tr,
+                    False,
+                    sub,
+                    sum(
+                        (item.test_case.score_weight or 0)
+                        for item in sub.test_results
+                        if item.test_case
+                    ),
+                )
                 for tr in sub.test_results
             ],
         }

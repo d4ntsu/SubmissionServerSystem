@@ -1,6 +1,6 @@
 import os
 
-from sqlalchemy import create_engine, event, inspect
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.core.config import settings
@@ -48,3 +48,15 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def run_lightweight_migrations() -> None:
+    """Add columns introduced after the initial schema without requiring Alembic."""
+    inspector = inspect(engine)
+    if "exams" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("exams")}
+    if "access_password_hash" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE exams ADD COLUMN access_password_hash VARCHAR(255)"))

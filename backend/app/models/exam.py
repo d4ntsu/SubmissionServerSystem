@@ -24,10 +24,15 @@ class Exam(Base):
     start_time = Column(DateTime, nullable=True)
     end_time = Column(DateTime, nullable=True)
     duration_minutes = Column(Integer, nullable=True)
+    access_password_hash = Column(String(255), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
     teacher = relationship("User")
     questions = relationship("Question", back_populates="exam", cascade="all, delete-orphan")
+
+    @property
+    def has_password(self) -> bool:
+        return bool(self.access_password_hash)
 
 
 class ExamParticipant(Base):

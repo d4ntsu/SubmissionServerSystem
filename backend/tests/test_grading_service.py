@@ -178,3 +178,32 @@ async def test_skips_non_running_submission():
 
         # Piston should never be called
         mock_piston.execute.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_missing_expected_answer_fails_submission():
+    """A test case without an expected answer must produce a grading error, not a pass."""
+    with patch("app.services.grading_service.SessionLocal") as mock_session_cls, \
+         patch("app.services.grading_service.PistonClient") as mock_piston_cls:
+
+        mock_db = mock_session_cls.return_value
+        mock_piston = mock_piston_cls.return_value.__aenter__.return_value
+
+        question = Question(id=1, exam_id=1, question_type=QuestionType.stdio, max_score=100.0)
+        submission = Submission(
+            id=1, student_id=1, question_id=1, language="java",
+            source_code="class Main {}", status=SubmissionStatus.running,
+            max_score=100.0,
+        )
+        tc1 = TestCase(id=1, question_id=1, input_data="", expected_output="", score_weight=1.0)
+
+        mock_db.get.side_effect = lambda model, pk: {
+            Submission: submission,
+            Question: question,
+        }.get(model)
+        mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [tc1]
+
+        await grade_submission(1)
+
+        assert submission.status == SubmissionStatus.error
+        assert "no expected answer" in (submission.error_summary or "").lower()
+        mock_piston.execute.assert_not_called()

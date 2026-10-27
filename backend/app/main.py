@@ -4,7 +4,13 @@ import asyncio
 import logging
 
 from app.core.config import settings
-from app.database import Base, SessionLocal, engine, ensure_user_presence_schema
+from app.database import (
+    Base,
+    SessionLocal,
+    engine,
+    ensure_user_presence_schema,
+    run_lightweight_migrations,
+)
 from app.models import *  # noqa: F401,F403 - register all models for metadata
 from app.api import auth, exams, questions, test_cases, submissions, results, realtime
 from app.realtime.bridge import RealtimeBridge
@@ -17,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
 ensure_user_presence_schema()
+run_lightweight_migrations()
 
 app = FastAPI(title="LAN Programming Exam System", version="0.1.0")
 app.state.realtime_manager = realtime_manager

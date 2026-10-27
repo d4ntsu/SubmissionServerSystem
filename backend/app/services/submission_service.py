@@ -4,12 +4,20 @@ from sqlalchemy.orm import Session
 
 from app.models.exam import Exam, ExamStatus
 from app.models.question import Question
-from app.models.submission import Submission, SubmissionStatus
+from app.models.submission import Submission, SubmissionStatus, SubmissionTestResult
 from app.models.user import User, UserRole
 
 
 class SubmissionValidationError(ValueError):
     """Raised when a submission request fails business-rule validation."""
+
+
+class SubmissionPermissionError(PermissionError):
+    """Raised when a teacher tries to act on another teacher's submission."""
+
+
+class SubmissionStateError(RuntimeError):
+    """Raised when a submission cannot be re-graded in its current state."""
 
 
 def validate_submission(
@@ -100,3 +108,33 @@ def list_submissions(
             Question.exam_id == exam_id
         )
     return query.order_by(Submission.submitted_at.desc()).all()
+
+
+def request_regrade(
+    db: Session,
+    submission_id: int,
+    teacher: User,
+) -> Submission | None:
+    """Requeue a submission for grading, clearing stale results and score."""
+    submission = db.get(Submission, submission_id)
+    if not submission:
+        return None
+
+    question = db.get(Question, submission.question_id)
+    exam = db.get(Exam, question.exam_id) if question else None
+    if not exam or exam.teacher_id != teacher.id:
+        raise SubmissionPermissionError("Not your exam")
+
+    if submission.status in (SubmissionStatus.queued, SubmissionStatus.running):
+        raise SubmissionStateError("Submission is already queued or being graded")
+
+    db.query(SubmissionTestResult).filter(
+        SubmissionTestResult.submission_id == submission.id
+    ).delete(synchronize_session=False)
+    submission.status = SubmissionStatus.queued
+    submission.score = None
+    submission.error_summary = None
+    submission.graded_at = None
+    db.commit()
+    db.refresh(submission)
+    return submission
