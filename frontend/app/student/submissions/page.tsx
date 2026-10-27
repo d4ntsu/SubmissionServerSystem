@@ -17,7 +17,6 @@ import {
   Clock,
   ArrowRight,
   Search,
-  Filter,
   AlertTriangle,
   Loader2,
   Lock,
@@ -69,7 +68,6 @@ export default function SubmissionsHistoryPage() {
   const { user, isTeacher } = useAuth();
   const { submissions, exams, questions } = useSocket();
   const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
   const [examFilter, setExamFilter] = useState<number | null>(null);
 
   useEffect(() => {
@@ -90,17 +88,11 @@ export default function SubmissionsHistoryPage() {
   );
 
   const filteredResults = results.filter((result) => {
-    const matchesStatus =
-      statusFilter === "all"
-        ? true
-        : statusFilter === "error"
-        ? result.errorCount > 0
-        : result.status === statusFilter;
     const matchesSearch =
       result.examTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
       result.examId.toString().includes(searchTerm);
     const matchesExam = examFilter === null || result.examId === examFilter;
-    return matchesStatus && matchesSearch && matchesExam;
+    return matchesSearch && matchesExam;
   });
 
   const filteredExamTitle =
@@ -167,20 +159,6 @@ export default function SubmissionsHistoryPage() {
                   className="pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono"
                 />
               </div>
-              <Filter className="w-3.5 h-3.5 text-slate-400" />
-              <select
-                value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value)}
-                className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono"
-              >
-                <option value="all">All Results</option>
-                <option value="passed">Passed</option>
-                <option value="partial">Partial</option>
-                <option value="failed">Not Passed</option>
-                <option value="grading">Grading</option>
-                <option value="error">Errors</option>
-                <option value="hidden">Hidden</option>
-              </select>
             </div>
           </div>
 

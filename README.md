@@ -189,9 +189,9 @@ Open `http://localhost:3000`.
 
 The frontend uses demo authentication:
 
-- Student: `student_john`
-- Teacher: `prof_alan`
-- Any password is accepted.
+- Student: `student_john` / `password123`
+- Teacher: `prof_alan` / `password123`
+- Anything else is rejected with an on-screen login failure message.
 
 ## Verification
 

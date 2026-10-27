@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { MarkdownRenderer } from "@/components/markdown/MarkdownRenderer";
+import { ExamVerificationModal } from "@/components/exam/ExamVerificationModal";
 import { useSocket } from "@/lib/socket-context";
 import { CodingLanguage, Question, TestCase, QuestionType, ExamStatus } from "@/types";
 import {
@@ -29,6 +30,8 @@ import {
   Eye,
   EyeOff,
   AlertTriangle,
+  FlaskConical,
+  ShieldCheck,
 } from "lucide-react";
 
 export default function TeacherQuestionsManagementPage() {
@@ -44,10 +47,27 @@ export default function TeacherQuestionsManagementPage() {
     testCases,
     createTestCase,
     deleteTestCase,
+    examVerifications,
   } = useSocket();
 
   const exam = exams.find((e) => e.id === examId) || exams[0];
   const examQuestions = questions[examId] || [];
+  const [verificationOpen, setVerificationOpen] = useState(false);
+
+  const startExam = () => {
+    if (!exam) return;
+    if (!examVerifications[exam.id]?.passed) {
+      setVerificationOpen(true);
+      return;
+    }
+    setExamStatus(exam.id, "started");
+  };
+
+  const openExamFromVerification = () => {
+    if (!exam) return;
+    setExamStatus(exam.id, "started");
+    setVerificationOpen(false);
+  };
 
   // Modal State for Create / Edit Question
   const [isQuestionModalOpen, setIsQuestionModalOpen] = useState(false);
@@ -249,6 +269,25 @@ export default function TeacherQuestionsManagementPage() {
 
             {/* Actions: Add Question & Exam Status Quick Switch */}
             <div className="flex items-center gap-2 flex-wrap">
+              {exam && (
+                <button
+                  onClick={() => setVerificationOpen(true)}
+                  className={`px-3 py-1.5 font-bold text-xs rounded shadow-xs flex items-center gap-1.5 border ${
+                    examVerifications[exam.id]?.passed
+                      ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                      : "bg-white text-amber-700 border-amber-200 hover:bg-amber-50"
+                  }`}
+                  title="Run a reference attempt and verify grading before opening the exam"
+                >
+                  <FlaskConical className="w-3.5 h-3.5" />
+                  <span>
+                    {examVerifications[exam.id]?.passed ? "Test Again" : "Test Exam"}
+                  </span>
+                  {examVerifications[exam.id]?.passed && (
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              )}
               {exam?.status === "draft" && (
                 <button
                   onClick={() => setExamStatus(exam.id, "published")}
@@ -259,8 +298,13 @@ export default function TeacherQuestionsManagementPage() {
               )}
               {exam?.status === "published" && (
                 <button
-                  onClick={() => setExamStatus(exam.id, "started")}
+                  onClick={startExam}
                   className="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs rounded shadow-xs flex items-center gap-1.5"
+                  title={
+                    exam && examVerifications[exam.id]?.passed
+                      ? "Start exam and open code submissions"
+                      : "Verify the exam before opening it to all students"
+                  }
                 >
                   <Play className="w-3.5 h-3.5 fill-white" />
                   <span>Start Exam Now</span>
@@ -906,6 +950,13 @@ export default function TeacherQuestionsManagementPage() {
             </div>
           </div>
         )}
+
+        <ExamVerificationModal
+          examId={exam?.id ?? examId}
+          isOpen={verificationOpen}
+          onClose={() => setVerificationOpen(false)}
+          onOpenExam={openExamFromVerification}
+        />
       </AppLayout>
     </ProtectedRoute>
   );

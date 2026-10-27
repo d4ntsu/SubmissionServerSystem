@@ -2,7 +2,6 @@
 
 import React, { useEffect, useState } from "react";
 import { Question, TestCase } from "@/types";
-import { hasAnswer } from "@/lib/grading";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -18,6 +17,7 @@ interface SubmitReviewModalProps {
   examTitle: string;
   questions: Question[];
   answers: Record<number, string>;
+  answeredIds: number[];
   testCases: Record<number, TestCase[]>;
   isSubmitting: boolean;
   onClose: () => void;
@@ -38,6 +38,7 @@ export function SubmitReviewModal({
   examTitle,
   questions,
   answers,
+  answeredIds,
   testCases,
   isSubmitting,
   onClose,
@@ -51,10 +52,9 @@ export function SubmitReviewModal({
 
   if (!isOpen) return null;
 
-  const answeredQuestions = questions.filter((question) => hasAnswer(answers[question.id] || ""));
-  const unansweredQuestions = questions.filter(
-    (question) => !hasAnswer(answers[question.id] || "")
-  );
+  const answeredSet = new Set(answeredIds);
+  const answeredQuestions = questions.filter((question) => answeredSet.has(question.id));
+  const unansweredQuestions = questions.filter((question) => !answeredSet.has(question.id));
   const missingAnswerCount = questions.filter(
     (question) => !isQuestionConfigured(question, testCases[question.id] || [])
   ).length;
@@ -140,7 +140,7 @@ export function SubmitReviewModal({
 
           {questions.map((question, index) => {
             const code = answers[question.id] || "";
-            const answered = hasAnswer(code);
+            const answered = answeredSet.has(question.id);
             const configured = isQuestionConfigured(question, testCases[question.id] || []);
 
             return (

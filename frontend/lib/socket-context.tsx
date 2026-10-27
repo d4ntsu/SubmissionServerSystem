@@ -21,6 +21,11 @@ import {
   MOCK_TEST_CASES,
 } from "./api";
 import { gradeSubmissionLocally } from "./grading";
+import {
+  buildExamVerification,
+  ExamVerification,
+  ExamVerificationSummary,
+} from "./exam-verification";
 
 export interface RealtimeToast {
   id: string;
@@ -47,6 +52,9 @@ interface SocketContextType {
   submissions: Submission[];
   submitCode: (sub: { student_id: number; student_name: string; question_id: number; question_title: string; exam_id: number; exam_title: string; language: string; source_code: string }) => Promise<Submission>;
   regradeSubmission: (id: number) => void;
+  examVerifications: Record<number, ExamVerificationSummary>;
+  runExamVerification: (id: number) => ExamVerification;
+  clearExamVerification: (id: number) => void;
 
   // Exam & Questions Management
   exams: Exam[];
@@ -73,6 +81,8 @@ const STORAGE_KEYS = {
   questions: "lan_exam_questions_v1",
   testCases: "lan_exam_test_cases_v1",
   submissions: "lan_exam_submissions_v1",
+  verifications: "lan_exam_verifications_v1",
+  eventLogs: "lan_exam_event_logs_v1",
 };
 
 export function SocketProvider({ children }: { children: React.ReactNode }) {
@@ -97,6 +107,9 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   const [exams, setExams] = useState<Exam[]>(MOCK_EXAMS);
   const [questions, setQuestions] = useState<Record<number, Question[]>>(MOCK_QUESTIONS);
   const [testCases, setTestCases] = useState<Record<number, TestCase[]>>(MOCK_TEST_CASES);
+  const [examVerifications, setExamVerifications] = useState<
+    Record<number, ExamVerificationSummary>
+  >({});
   const [examPasswords, setExamPasswords] = useState<Record<number, string>>(() => {
     if (typeof window === "undefined") return {};
     try {
@@ -145,6 +158,21 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
             Math.max(nextSubmissionId.current, ...recovered.map((submission) => submission.id)) + 1;
         }
       }
+      const storedVerifications = window.localStorage.getItem(STORAGE_KEYS.verifications);
+      if (storedVerifications) {
+        const parsed = JSON.parse(storedVerifications);
+        if (parsed && typeof parsed === "object") setExamVerifications(parsed);
+      }
+      const storedLogs = window.localStorage.getItem(STORAGE_KEYS.eventLogs);
+      if (storedLogs) {
+        const parsed = JSON.parse(storedLogs);
+        if (Array.isArray(parsed)) setEventLogs(parsed);
+      } else {
+        window.localStorage.setItem(
+          STORAGE_KEYS.eventLogs,
+          JSON.stringify(MOCK_EVENT_LOGS)
+        );
+      }
     } catch {
       // Fall back to the bundled demo data when storage is corrupted.
     }
@@ -170,6 +198,29 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     if (!storageReady || typeof window === "undefined") return;
     window.localStorage.setItem(STORAGE_KEYS.submissions, JSON.stringify(submissions));
   }, [submissions, storageReady]);
+
+  useEffect(() => {
+    if (!storageReady || typeof window === "undefined") return;
+    window.localStorage.setItem(
+      STORAGE_KEYS.verifications,
+      JSON.stringify(examVerifications)
+    );
+  }, [examVerifications, storageReady]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== STORAGE_KEYS.eventLogs) return;
+      try {
+        const parsed = event.newValue ? JSON.parse(event.newValue) : [];
+        if (Array.isArray(parsed)) setEventLogs(parsed);
+      } catch {
+        // Ignore malformed cross-tab log payloads.
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
 
   const persistPasswords = useCallback((next: Record<number, string>) => {
     setExamPasswords(next);
@@ -226,12 +277,28 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     (level: "INFO" | "WARN" | "EVENT" | "SUBMISSION" | "SYSTEM", source: string, message: string, details?: any) => {
       const newLog: RealtimeEventLog = {
         id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-        timestamp: new Date().toLocaleTimeString(),
+        timestamp: new Date().toISOString(),
         level,
         source,
         message,
         details,
       };
+      if (typeof window !== "undefined") {
+        try {
+          const stored = window.localStorage.getItem(STORAGE_KEYS.eventLogs);
+          const parsed = stored ? JSON.parse(stored) : [];
+          const current = Array.isArray(parsed) ? (parsed as RealtimeEventLog[]) : [];
+          window.localStorage.setItem(
+            STORAGE_KEYS.eventLogs,
+            JSON.stringify([newLog, ...current.slice(0, 99)])
+          );
+        } catch {
+          window.localStorage.setItem(
+            STORAGE_KEYS.eventLogs,
+            JSON.stringify([newLog])
+          );
+        }
+      }
       setEventLogs((prev) => [newLog, ...prev.slice(0, 99)]);
     },
     []
@@ -275,6 +342,56 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
   const clearLogs = () => {
     setEventLogs([]);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(STORAGE_KEYS.eventLogs, JSON.stringify([]));
+    }
+  };
+
+  const clearExamVerification = (id: number) => {
+    setExamVerifications((previous) => {
+      if (!(id in previous)) return previous;
+      const next = { ...previous };
+      delete next[id];
+      return next;
+    });
+  };
+
+  const examIdForQuestion = (questionId: number): number | null => {
+    for (const [examId, examQuestions] of Object.entries(questions)) {
+      if (examQuestions.some((question) => question.id === questionId)) {
+        return Number(examId);
+      }
+    }
+    return null;
+  };
+
+  const runExamVerification = (id: number): ExamVerification => {
+    const exam = exams.find((item) => item.id === id);
+    const examQuestions = questions[id] || [];
+    const casesByQuestion: Record<number, TestCase[]> = {};
+    examQuestions.forEach((question) => {
+      casesByQuestion[question.id] = testCases[question.id] || [];
+    });
+
+    const report = buildExamVerification(exam, id, examQuestions, casesByQuestion);
+    setExamVerifications((previous) => ({
+      ...previous,
+      [id]: {
+        examId: id,
+        checkedAt: report.checkedAt,
+        passed: report.passed,
+      },
+    }));
+
+    addLog(
+      report.passed ? "EVENT" : "WARN",
+      "Exam Verification",
+      report.passed
+        ? `Preflight verification passed for "${report.examTitle}" (${report.questions.length} question${report.questions.length === 1 ? "" : "s"} ready)`
+        : `Preflight verification failed for "${report.examTitle}" (${report.questions.filter((question) => !question.passed).length} question(s) need fixes)`
+    );
+
+    return report;
   };
 
   // Exam Management actions
@@ -305,6 +422,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateExam = (id: number, data: Partial<Exam> & { access_password?: string | null }) => {
+    clearExamVerification(id);
     const { access_password, ...examData } = data;
     setExams((prev) =>
       prev.map((e) => (e.id === id ? { ...e, ...examData } : e))
@@ -350,6 +468,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteExam = (id: number) => {
+    clearExamVerification(id);
     setExams((prev) => prev.filter((e) => e.id !== id));
     if (examPasswords[id]) {
       const next = { ...examPasswords };
@@ -361,6 +480,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
   // Question Management actions
   const createQuestion = (examId: number, data: Partial<Question>): Question => {
+    clearExamVerification(examId);
     const existing = questions[examId] || [];
     const newId = 100 + Math.floor(Math.random() * 899);
     const newQ: Question = {
@@ -402,6 +522,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateQuestion = (examId: number, questionId: number, data: Partial<Question>) => {
+    clearExamVerification(examId);
     setQuestions((prev) => ({
       ...prev,
       [examId]: (prev[examId] || []).map((q) => (q.id === questionId ? { ...q, ...data } : q)),
@@ -410,6 +531,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteQuestion = (examId: number, questionId: number) => {
+    clearExamVerification(examId);
     setQuestions((prev) => ({
       ...prev,
       [examId]: (prev[examId] || []).filter((q) => q.id !== questionId),
@@ -419,6 +541,8 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
   // Test Case Management actions
   const createTestCase = (questionId: number, data: Partial<TestCase>): TestCase => {
+    const ownerExamId = examIdForQuestion(questionId);
+    if (ownerExamId !== null) clearExamVerification(ownerExamId);
     const existing = testCases[questionId] || [];
     const newId = 1000 + Math.floor(Math.random() * 8999);
     const newTc: TestCase = {
@@ -442,6 +566,8 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteTestCase = (questionId: number, testCaseId: number) => {
+    const ownerExamId = examIdForQuestion(questionId);
+    if (ownerExamId !== null) clearExamVerification(ownerExamId);
     setTestCases((prev) => ({
       ...prev,
       [questionId]: (prev[questionId] || []).filter((tc) => tc.id !== testCaseId),
@@ -675,6 +801,9 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
         submissions,
         submitCode,
         regradeSubmission,
+        examVerifications,
+        runExamVerification,
+        clearExamVerification,
 
         // Exam & Questions Management
         exams,

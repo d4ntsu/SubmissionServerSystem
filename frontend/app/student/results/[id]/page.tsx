@@ -270,7 +270,9 @@ export default function ExamResultPage() {
               </span>
             </div>
             <span className="text-[11px] text-slate-500">
-              Inspect a question below to see its test-case level score breakdown.
+              {result.status === "hidden"
+                ? "Question inspection is disabled while the instructor keeps scores hidden."
+                : "Inspect a question below to see its test-case level score breakdown."}
             </span>
           </div>
 
@@ -405,7 +407,7 @@ export default function ExamResultPage() {
                           </span>
                           <span className="text-sm font-black text-slate-800">{scoreLabel}</span>
                         </div>
-                        {question.submission ? (
+                        {question.submission && question.visible ? (
                           <Link
                             href={`/student/submissions/${question.submission.id}`}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-orange-500 hover:text-white text-slate-700 font-bold text-[11px] rounded transition-colors"
@@ -413,6 +415,11 @@ export default function ExamResultPage() {
                             Inspect Question
                             <ArrowRight className="w-3.5 h-3.5" />
                           </Link>
+                        ) : question.submission ? (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-slate-50 border border-slate-200 text-slate-400 font-bold text-[11px]">
+                            <Lock className="w-3 h-3" />
+                            Inspection hidden
+                          </span>
                         ) : (
                           <span className="px-3 py-1.5 rounded bg-slate-50 border border-slate-200 text-slate-400 font-bold text-[11px]">
                             No submission

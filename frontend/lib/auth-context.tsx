@@ -2,13 +2,13 @@
 
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { User, UserRole } from "@/types";
-import { MOCK_USER_STUDENT, MOCK_USER_TEACHER } from "./api";
+import { MOCK_USER_STUDENT, MOCK_USER_TEACHER, isValidDemoCredentials } from "./api";
 
 interface AuthContextType {
   user: User | null;
   role: UserRole;
   token: string | null;
-  login: (username: string, role?: UserRole) => void;
+  login: (username: string, password: string, role?: UserRole) => User | null;
   logout: () => void;
   isTeacher: boolean;
   isStudent: boolean;
@@ -57,15 +57,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(false);
   }, []);
 
-  const login = (username: string, role: UserRole = "student") => {
+  const login = (
+    username: string,
+    password: string,
+    role: UserRole = "student"
+  ): User | null => {
+    if (!isValidDemoCredentials(username, password, role)) {
+      return null;
+    }
+
     const newUser: User =
       role === "teacher"
-        ? { ...MOCK_USER_TEACHER, username: username || "prof_alan" }
-        : { ...MOCK_USER_STUDENT, username: username || "student_john" };
+        ? { ...MOCK_USER_TEACHER, username }
+        : { ...MOCK_USER_STUDENT, username };
     setUser(newUser);
     setToken("auth_token_" + role);
     localStorage.setItem("lan_exam_user", JSON.stringify(newUser));
     setAuthCookie(role);
+    return newUser;
   };
 
   const logout = () => {

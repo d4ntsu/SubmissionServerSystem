@@ -18,9 +18,14 @@ export function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout, isTeacher } = useAuth();
-  const { exams } = useSocket();
+  const { exams, addLog } = useSocket();
 
   const handleLogout = () => {
+    addLog(
+      "EVENT",
+      user?.full_name || "Unknown user",
+      "Logged out of the exam portal"
+    );
     logout();
     router.replace("/login");
   };

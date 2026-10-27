@@ -36,6 +36,18 @@ const LOG_LEVEL_CLS: Record<string, string> = {
   SYSTEM:     "text-slate-500",
 };
 
+function formatLogTimestamp(timestamp: string) {
+  const parsed = new Date(timestamp);
+  if (!Number.isFinite(parsed.getTime())) return timestamp;
+  return parsed.toLocaleString([], {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 export default function TeacherRealtimeMonitoringPage() {
   const { studentsStatus, eventLogs, clearLogs, submissions } = useSocket();
   const [searchTerm, setSearchTerm] = useState("");
@@ -253,8 +265,11 @@ export default function TeacherRealtimeMonitoringPage() {
               ) : (
                 [...eventLogs].reverse().map((log) => (
                   <div key={log.id} className="px-5 py-2 flex items-start gap-3 hover:bg-slate-50 transition-colors">
-                    <span className="text-slate-400 shrink-0 w-16 text-[10px] pt-0.5">
-                      {new Date(log.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                    <span
+                      className="text-slate-400 shrink-0 w-32 text-[10px] pt-0.5"
+                      title={new Date(log.timestamp).toString()}
+                    >
+                      {formatLogTimestamp(log.timestamp)}
                     </span>
                     <span
                       className={`shrink-0 font-bold uppercase text-[9px] w-20 pt-0.5 ${
