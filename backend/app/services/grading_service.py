@@ -11,6 +11,7 @@ from app.models.submission import (
     SubmissionTestResult,
 )
 from app.models.test_case import TestCase
+from app.services.java_method_grader import grade_java_method
 from app.services.piston_client import PistonClient, PistonClientError
 
 logger = logging.getLogger(__name__)
@@ -51,8 +52,10 @@ async def grade_submission(submission_id: int) -> None:
 
         if question.question_type == QuestionType.stdio:
             await _grade_stdio(db, submission, question, test_cases)
+        elif question.question_type == QuestionType.java_class:
+            await grade_java_method(db, submission, question, test_cases)
         else:
-            _fail_submission(db, submission, "Java class/method grading is not yet implemented")
+            _fail_submission(db, submission, "Unsupported question type")
 
     except PistonClientError as exc:
         _fail_submission(db, submission, f"Piston error: {exc}")

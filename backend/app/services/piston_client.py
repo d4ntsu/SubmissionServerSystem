@@ -90,9 +90,17 @@ class PistonClient:
         stdin: str = "",
         args: list[str] | None = None,
         version: str | None = None,
+        run_timeout_ms: int | None = None,
+        run_memory_limit_bytes: int | None = None,
     ) -> PistonExecutionResult:
         if not files:
             raise ValueError("At least one source file is required")
+        for name, value in (
+            ("run_timeout_ms", run_timeout_ms),
+            ("run_memory_limit_bytes", run_memory_limit_bytes),
+        ):
+            if value is not None and (type(value) is not int or value <= 0):
+                raise ValueError(f"{name} must be a positive integer")
         try:
             file_payloads = [
                 PistonFile.model_validate(file).model_dump(exclude_unset=True)
@@ -124,9 +132,9 @@ class PistonClient:
             "files": file_payloads,
             "stdin": stdin,
             "compile_timeout": settings.piston_compile_timeout_ms,
-            "run_timeout": settings.piston_run_timeout_ms,
+            "run_timeout": run_timeout_ms if run_timeout_ms is not None else settings.piston_run_timeout_ms,
             "compile_memory_limit": settings.piston_compile_memory_limit_bytes,
-            "run_memory_limit": settings.piston_run_memory_limit_bytes,
+            "run_memory_limit": run_memory_limit_bytes if run_memory_limit_bytes is not None else settings.piston_run_memory_limit_bytes,
         }
         if args:
             payload["args"] = args
