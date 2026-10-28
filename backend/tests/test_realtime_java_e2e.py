@@ -40,6 +40,16 @@ def _free_port() -> int:
         return int(listener.getsockname()[1])
 
 
+def _java_executable() -> str:
+    executable_name = "java.exe" if os.name == "nt" else "java"
+    java_home = os.environ.get("JAVA_HOME")
+    if java_home:
+        executable = Path(java_home) / "bin" / executable_name
+        if executable.is_file():
+            return str(executable)
+    return "java"
+
+
 def _wait_for_tcp(
     port: int,
     process: subprocess.Popen[bytes],
@@ -119,7 +129,7 @@ class _RealtimeStack:
         self.java_log_path = self.database_path.with_suffix(f".java-{log_number}.log")
         self._java_log_handle = self.java_log_path.open("wb")
         self.java_process = subprocess.Popen(
-            ["java", "-jar", str(SERVER_JAR)],
+            [_java_executable(), "-jar", str(SERVER_JAR)],
             cwd=JAVA_ROOT,
             env=self.java_env,
             stdout=self._java_log_handle,
@@ -163,6 +173,19 @@ class _RealtimeStack:
         if self._java_log_handle is not None:
             self._java_log_handle.close()
             self._java_log_handle = None
+
+    def wait_for_bridge_disconnect(self, previous_failure_count: int, timeout: float = 5.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            log = self.api_log_path.read_text(encoding="utf-8", errors="replace")
+            failure_count = log.count("Java realtime connection unavailable:")
+            if failure_count > previous_failure_count:
+                return
+            if self.api_process is None or self.api_process.poll() is not None:
+                raise AssertionError("FastAPI exited before observing the Java server shutdown")
+            time.sleep(0.01)
+        raise AssertionError("FastAPI realtime bridge did not observe the Java server shutdown")
+
     def close(self) -> None:
         self.stop_java()
         if self.api_process is not None and self.api_process.poll() is None:
@@ -572,7 +595,14 @@ async def _run_live_acceptance(stack: _RealtimeStack) -> None:
                 assert json.loads(await ws.recv())["payload"] == {"alive": True}
 
             # Stop Java, confirm FastAPI and browser sockets stay usable, then restart it.
+            previous_bridge_failures = stack.api_log_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).count("Java realtime connection unavailable:")
             stack.stop_java()
+            await asyncio.to_thread(
+                stack.wait_for_bridge_disconnect,
+                previous_bridge_failures,
+            )
             health = await client.get("/health")
             assert health.status_code == 200
             await browser_sockets[0].send(json.dumps({"type": "client.heartbeat"}))

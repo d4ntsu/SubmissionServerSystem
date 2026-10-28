@@ -57,7 +57,7 @@ async def grade_submission(submission_id: int) -> None:
         ]
         if missing_answers:
             missing_list = ", ".join(f"#{index}" for index in missing_answers)
-            _fail_submission(
+            await _fail_submission(
                 db,
                 submission,
                 f"Test case {missing_list} has no expected answer configured; "

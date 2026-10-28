@@ -101,6 +101,7 @@ class RealtimeBridge:
         self._stopping = False
         self._first_attempt: asyncio.Event | None = None
         self._first_attempt_succeeded = False
+        self._first_failed = False
         self._recent_event_ids: OrderedDict[str, float] = OrderedDict()
 
     @property
@@ -122,6 +123,7 @@ class RealtimeBridge:
         self._inbound = asyncio.Queue(maxsize=OUTBOUND_QUEUE_SIZE)
         self._first_attempt = asyncio.Event()
         self._first_attempt_succeeded = False
+        self._first_failed = False
         self._task = asyncio.create_task(self._connection_loop(), name="fastapi-java-realtime-bridge")
         await self._first_attempt.wait()
         return self._first_attempt_succeeded
@@ -243,7 +245,7 @@ class RealtimeBridge:
                 logger.warning("Java realtime connection unavailable: %s", type(exc).__name__)
                 if self._first_attempt is not None and not self._first_attempt.is_set():
                     self._first_attempt_succeeded = False
-                    self._first_attempt.set()
+                    self._first_failed = True
             finally:
                 self._connected = False
                 self._writer = None
@@ -261,6 +263,9 @@ class RealtimeBridge:
                 retry_delay = self._initial_retry
             await asyncio.sleep(retry_delay)
             retry_delay = min(retry_delay * 2, self._max_retry)
+            if self._first_failed and self._first_attempt is not None:
+                self._first_failed = False
+                self._first_attempt.set()
 
     async def _authenticate(
         self,

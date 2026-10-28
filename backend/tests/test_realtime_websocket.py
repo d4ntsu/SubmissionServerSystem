@@ -493,7 +493,11 @@ def test_six_concurrent_clients_isolate_slow_sends_and_route_events():
         ))
 
         broadcast = asyncio.create_task(manager.broadcast_to_browsers(broadcast_error))
-        await asyncio.sleep(0.01)
+        # The broadcast sends to all sockets, including the slow one; the gather
+        # waits for the slow socket's timeout, so the fast sends complete within
+        # the per-socket timeout. Wait long enough for the fast sends to be
+        # observed without depending on precise event-loop timing.
+        await asyncio.sleep(0.05)
         assert all(socket.sent for socket in fast_sockets)
         assert not broadcast.done()
         assert await broadcast == 5
