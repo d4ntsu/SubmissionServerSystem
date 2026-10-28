@@ -8,6 +8,7 @@ from app.database import (
     Base,
     SessionLocal,
     engine,
+    ensure_refresh_session_schema,
     ensure_user_presence_schema,
     run_lightweight_migrations,
 )
@@ -22,6 +23,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
+ensure_refresh_session_schema()
 ensure_user_presence_schema()
 run_lightweight_migrations()
 
