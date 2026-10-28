@@ -37,7 +37,6 @@ import {
     updateExamRequest,
       updateQuestionRequest,
       BackendSubmissionResult,
-    ApiError,
   } from "./api";
 import { gradeSubmissionLocally } from "./grading";
 import { useAuth } from "./auth-context";
@@ -78,6 +77,7 @@ interface SocketContextType {
 
   // Exam & Questions Management
   exams: Exam[];
+  isLoadingExamData: boolean;
   dataApiError: string | null;
   isExamDataLoaded: boolean;
   retryExamData: () => void;
@@ -108,7 +108,7 @@ const STORAGE_KEYS = {
 };
 
 export function SocketProvider({ children }: { children: React.ReactNode }) {
-  const { token, logout } = useAuth();
+  const { token } = useAuth();
   const [isConnected, setIsConnected] = useState(true);
   const [announcements, setAnnouncements] = useState<Announcement[]>(MOCK_ANNOUNCEMENTS);
   const [activeAnnouncement, setActiveAnnouncement] = useState<Announcement | null>(null);
@@ -142,6 +142,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     }
   });
   const [storageReady, setStorageReady] = useState(false);
+  const [isLoadingExamData, setIsLoadingExamData] = useState(true);
   const [dataApiError, setDataApiError] = useState<string | null>(null);
   const [isExamDataLoaded, setIsExamDataLoaded] = useState(false);
   const [examDataRetryCount, setExamDataRetryCount] = useState(0);
@@ -206,10 +207,12 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     if (!token) {
       setDataApiError(null);
       setIsExamDataLoaded(false);
+      setIsLoadingExamData(false);
       return;
     }
 
     let cancelled = false;
+    setIsLoadingExamData(true);
     setDataApiError(null);
     setIsExamDataLoaded(false);
     setExams([]);
@@ -251,9 +254,10 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
             ? error.message
             : "Could not load exam data from the backend. Retry when the server is available."
         );
-        setIsExamDataLoaded(true);
-        if (error instanceof ApiError && error.status === 401) {
-          logout("Your session was rejected by the backend. Please sign in again.");
+      } finally {
+        if (!cancelled) {
+          setIsExamDataLoaded(true);
+          setIsLoadingExamData(false);
         }
       }
     })();
@@ -261,7 +265,13 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [token, examDataRetryCount, logout]);
+  }, [token, examDataRetryCount]);
+
+  const retryExamData = useCallback(() => {
+    setIsLoadingExamData(true);
+    setIsExamDataLoaded(false);
+    setExamDataRetryCount((count) => count + 1);
+  }, []);
 
   useEffect(() => {
     if (!storageReady || typeof window === "undefined") return;
@@ -517,6 +527,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
           addLog("EVENT", "Exam Manager", `Created new examination #${created.id}: "${created.title}" (Status: ${created.status.toUpperCase()})`);
           return created;
         }
+        throw new Error("Could not save the exam to the backend. Please try again.");
       }
 
       setExams((prev) => [newExam, ...prev]);
@@ -1302,9 +1313,10 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
         // Exam & Questions Management
         exams,
+        isLoadingExamData,
         dataApiError,
         isExamDataLoaded,
-        retryExamData: () => setExamDataRetryCount((count) => count + 1),
+        retryExamData,
         createExam,
         updateExam,
         setExamStatus,
@@ -1330,7 +1342,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
           <p>{dataApiError}</p>
           <button
             type="button"
-            onClick={() => setExamDataRetryCount((count) => count + 1)}
+            onClick={retryExamData}
             className="mt-2 font-bold underline"
           >
             Retry loading exam data

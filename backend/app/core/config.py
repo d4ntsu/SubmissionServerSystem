@@ -1,10 +1,17 @@
+from typing import Literal
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     secret_key: str = "dev-secret-change-in-production"
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 60
+    access_token_expire_minutes: int = 15
+    refresh_session_days: int = 14
+    refresh_cookie_secure: bool = False
+    refresh_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
+    app_environment: str = "development"
 
     database_url: str = "sqlite:///./data/exam_system.db"
 
@@ -30,6 +37,21 @@ class Settings(BaseSettings):
         "env_file_encoding": "utf-8",
         "extra": "ignore",
     }
+
+    @model_validator(mode="after")
+    def validate_refresh_cookie_environment(self):
+        if self.refresh_session_days <= 0:
+            raise ValueError("REFRESH_SESSION_DAYS must be positive")
+        if self.access_token_expire_minutes <= 0:
+            raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES must be positive")
+        if self.app_environment.lower() != "development" and not self.refresh_cookie_secure:
+            raise ValueError("REFRESH_COOKIE_SECURE must be true outside development")
+        if self.refresh_cookie_samesite == "none" and not self.refresh_cookie_secure:
+            raise ValueError("SameSite=None requires REFRESH_COOKIE_SECURE=true")
+        allowed_origins = [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        if not allowed_origins or "*" in allowed_origins:
+            raise ValueError("CORS_ORIGINS must contain explicit origins and cannot include '*'")
+        return self
 
 
 settings = Settings()

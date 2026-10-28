@@ -6,7 +6,7 @@ from app.main import app
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    return TestClient(app, headers={"Origin": "http://localhost:3000"})
 
 
 @pytest.fixture

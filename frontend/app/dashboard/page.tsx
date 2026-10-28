@@ -20,8 +20,13 @@ import {
 } from "lucide-react";
 
 export default function ExamDashboardPage() {
-  const { user, isTeacher, isStudent } = useAuth();
-  const { exams, dataApiError, isExamDataLoaded, retryExamData } = useSocket();
+  const { user, isTeacher } = useAuth();
+  const {
+    exams,
+    isLoadingExamData,
+    isExamDataLoaded,
+    dataApiError,
+  } = useSocket();
 
   const launchExamWindow = (examId: number) => {
     const width = 1280;
@@ -48,32 +53,7 @@ export default function ExamDashboardPage() {
   const activeExams = exams.filter((e) => e.status === "started");
   const upcomingExams = exams.filter((e) => e.status === "published");
   const completedExams = exams.filter((e) => e.status === "ended");
-
-  if ((isStudent || isTeacher) && (!isExamDataLoaded || dataApiError)) {
-    return (
-      <ProtectedRoute>
-        <AppLayout>
-          <div className="bg-white rounded-lg border border-slate-200 p-8 text-center space-y-3">
-            {dataApiError ? (
-              <>
-                <p className="text-sm font-bold text-slate-800">Could not load exams</p>
-                <p className="text-xs text-slate-500">{dataApiError}</p>
-                <button
-                  type="button"
-                  onClick={retryExamData}
-                  className="px-4 py-2 rounded bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold"
-                >
-                  Retry
-                </button>
-              </>
-            ) : (
-              <p className="text-sm text-slate-500">Loading exams...</p>
-            )}
-          </div>
-        </AppLayout>
-      </ProtectedRoute>
-    );
-  }
+  const examDataReady = isExamDataLoaded && !isLoadingExamData && !dataApiError;
 
   return (
     <ProtectedRoute>
@@ -123,7 +103,7 @@ export default function ExamDashboardPage() {
             >
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-slate-800 tracking-tight uppercase font-mono">
-                  Available Active Examinations ({activeExams.length})
+                  Available Active Examinations ({examDataReady ? activeExams.length : "—"})
                 </span>
                 <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                   LIVE NOW
@@ -138,7 +118,22 @@ export default function ExamDashboardPage() {
 
             {activeOpen && (
               <div className="divide-y divide-slate-100">
-                {activeExams.map((exam) => (
+                {!examDataReady ? dataApiError ? (
+                  <p className="p-5 text-sm text-red-700">
+                    Exam data could not be loaded. Use the retry action to try again.
+                  </p>
+                ) : (
+                  <p className="p-5 text-sm text-slate-500">Loading exams...</p>
+                ) : exams.length === 0 ? (
+                  <p className="p-5 text-sm text-slate-500">
+                    No exams are currently available. Please check again later.
+                  </p>
+                ) : activeExams.length === 0 ? (
+                  <p className="p-5 text-sm text-slate-500">
+                    There are no active exams right now. Please check again later.
+                  </p>
+                ) : null}
+                {examDataReady && activeExams.map((exam) => (
                   <div
                     key={exam.id}
                     className="p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5 hover:bg-slate-50/50 transition-colors"
@@ -212,7 +207,7 @@ export default function ExamDashboardPage() {
             >
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-slate-800 tracking-tight uppercase font-mono">
-                  Upcoming Scheduled Assessments ({upcomingExams.length})
+                  Upcoming Scheduled Assessments ({examDataReady ? upcomingExams.length : "—"})
                 </span>
               </div>
               <ChevronDown
@@ -224,7 +219,19 @@ export default function ExamDashboardPage() {
 
             {upcomingOpen && (
               <div className="divide-y divide-slate-100">
-                {upcomingExams.map((exam) => (
+                {!examDataReady && (
+                  <p className={`p-5 text-sm ${dataApiError ? "text-red-700" : "text-slate-500"}`}>
+                    {dataApiError
+                      ? "Exam data could not be loaded. Use the retry action to try again."
+                      : "Loading exams..."}
+                  </p>
+                )}
+                {examDataReady && upcomingExams.length === 0 && (
+                  <p className="p-5 text-sm text-slate-500">
+                    No upcoming exams are scheduled.
+                  </p>
+                )}
+                {examDataReady && upcomingExams.map((exam) => (
                   <div
                     key={exam.id}
                     className="p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5 hover:bg-slate-50/50 transition-colors"
@@ -279,7 +286,7 @@ export default function ExamDashboardPage() {
             >
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-slate-800 tracking-tight uppercase font-mono">
-                  Archived & Practice Activities ({completedExams.length})
+                  Archived & Practice Activities ({examDataReady ? completedExams.length : "—"})
                 </span>
               </div>
               <ChevronDown
@@ -291,7 +298,19 @@ export default function ExamDashboardPage() {
 
             {completedOpen && (
               <div className="divide-y divide-slate-100">
-                {completedExams.map((exam) => (
+                {!examDataReady && (
+                  <p className={`p-5 text-sm ${dataApiError ? "text-red-700" : "text-slate-500"}`}>
+                    {dataApiError
+                      ? "Exam data could not be loaded. Use the retry action to try again."
+                      : "Loading exams..."}
+                  </p>
+                )}
+                {examDataReady && completedExams.length === 0 && (
+                  <p className="p-5 text-sm text-slate-500">
+                    No completed exams yet.
+                  </p>
+                )}
+                {examDataReady && completedExams.map((exam) => (
                   <div
                     key={exam.id}
                     className="p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5 hover:bg-slate-50/50 transition-colors"
