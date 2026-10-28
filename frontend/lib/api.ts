@@ -36,6 +36,31 @@ export interface LoginResult {
   token_type?: string;
 }
 
+let activeAccessToken: string | null = null;
+let refreshInFlight: Promise<string> | null = null;
+const accessTokenListeners = new Set<(token: string | null) => void>();
+const sessionExpiredListeners = new Set<() => void>();
+
+export function setAccessToken(token: string | null): void {
+  activeAccessToken = token;
+  accessTokenListeners.forEach((listener) => listener(token));
+}
+
+export function subscribeAccessToken(listener: (token: string | null) => void): () => void {
+  accessTokenListeners.add(listener);
+  return () => accessTokenListeners.delete(listener);
+}
+
+export function subscribeSessionExpired(listener: () => void): () => void {
+  sessionExpiredListeners.add(listener);
+  return () => sessionExpiredListeners.delete(listener);
+}
+
+function notifySessionExpired(): void {
+  setAccessToken(null);
+  sessionExpiredListeners.forEach((listener) => listener());
+}
+
 export type ApiErrorKind = "http" | "network" | "invalid_response";
 
 export class ApiError extends Error {
@@ -83,6 +108,98 @@ async function readJson<T>(response: Response, action: string): Promise<T> {
   }
 }
 
+async function requestRefresh(): Promise<Response> {
+  const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (response.status !== 409) return response;
+
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  return fetch(`${API_BASE_URL}/auth/refresh`, {
+    method: "POST",
+    credentials: "include",
+  });
+}
+
+export async function refreshAccessToken(): Promise<string> {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      let response: Response;
+      try {
+        response = await requestRefresh();
+      } catch {
+        throw new ApiError(
+          "Session verification could not reach the backend. Check the connection and retry.",
+          "network"
+        );
+      }
+
+      if (!response.ok) {
+        throw httpError("Refreshing session", response);
+      }
+
+      const data: unknown = await readJson(response, "Refreshing session");
+      if (!isLoginResult(data)) {
+        throw new ApiError("Refreshing session returned an invalid response.", "invalid_response", response.status);
+      }
+      setAccessToken(data.access_token);
+      return data.access_token;
+    })().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+async function authenticatedFetch(
+  url: string,
+  init: RequestInit = {},
+  token?: string,
+  retryAfterRefresh = true
+): Promise<Response> {
+  const headers = new Headers(init.headers);
+  const requestToken = activeAccessToken ?? token;
+  if (requestToken) headers.set("Authorization", `Bearer ${requestToken}`);
+
+  const response = await fetch(url, {
+    ...init,
+    headers,
+    credentials: "include",
+  });
+  if (response.status !== 401 || !retryAfterRefresh) {
+    if (response.status === 401 && !retryAfterRefresh) notifySessionExpired();
+    return response;
+  }
+
+  let refreshedToken: string;
+  try {
+    refreshedToken = await refreshAccessToken();
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) notifySessionExpired();
+    throw error;
+  }
+  return authenticatedFetch(
+    url,
+    { ...init, headers: new Headers(init.headers) },
+    refreshedToken,
+    false
+  );
+}
+
+export async function logoutRequest(): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+    });
+  } catch {
+    throw new ApiError("Could not reach the backend to revoke the session.", "network");
+  }
+  if (!response.ok) throw httpError("Revoking session", response);
+}
+
 export async function loginRequest(
   username: string,
   password: string
@@ -92,6 +209,7 @@ export async function loginRequest(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
+      credentials: "include",
     });
     if (!res.ok) throw httpError("Login", res);
     const data: unknown = await readJson(res, "Login");
@@ -107,7 +225,7 @@ export async function loginRequest(
 
 export async function fetchCurrentUser(token: string): Promise<User> {
   try {
-    const res = await fetch(`${API_BASE_URL}/auth/me`, {
+    const res = await authenticatedFetch(`${API_BASE_URL}/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) throw httpError("Session verification", res);
@@ -686,7 +804,7 @@ export const MOCK_EVENT_LOGS: RealtimeEventLog[] = [
 // Authenticated data requests must report backend failures rather than present demo records.
 export async function fetchExams(token?: string): Promise<Exam[]> {
   try {
-    const res = await fetch(`${API_BASE_URL}/exams`, {
+    const res = await authenticatedFetch(`${API_BASE_URL}/exams`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!res.ok) throw httpError("Loading exams", res);
@@ -703,7 +821,7 @@ export async function fetchExams(token?: string): Promise<Exam[]> {
 
 export async function fetchExamById(examId: number, token?: string): Promise<Exam | undefined> {
   try {
-    const res = await fetch(`${API_BASE_URL}/exams/${examId}`, {
+    const res = await authenticatedFetch(`${API_BASE_URL}/exams/${examId}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (res.status === 404) return undefined;
@@ -720,7 +838,7 @@ export async function fetchQuestionsByExam(
   token?: string
 ): Promise<BackendQuestion[]> {
   try {
-    const res = await fetch(`${API_BASE_URL}/questions?exam_id=${examId}`, {
+    const res = await authenticatedFetch(`${API_BASE_URL}/questions?exam_id=${examId}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!res.ok) throw httpError("Loading exam questions", res);
@@ -747,7 +865,7 @@ export async function fetchTestCasesByQuestion(
   token?: string
 ): Promise<BackendTestCase[]> {
   try {
-    const res = await fetch(`${API_BASE_URL}/test-cases/question/${questionId}`, {
+    const res = await authenticatedFetch(`${API_BASE_URL}/test-cases/question/${questionId}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!res.ok) throw httpError("Loading question test cases", res);
@@ -793,7 +911,7 @@ export async function createExamRequest(
   token?: string
 ): Promise<Exam | null> {
   try {
-    const res = await fetch(`${API_BASE_URL}/exams`, {
+    const res = await authenticatedFetch(`${API_BASE_URL}/exams`, {
       method: "POST",
       headers: authHeaders(token),
       body: JSON.stringify(payload),
@@ -821,7 +939,7 @@ export async function updateExamRequest(
   token?: string
 ): Promise<Exam | null> {
   try {
-    const res = await fetch(`${API_BASE_URL}/exams/${examId}`, {
+    const res = await authenticatedFetch(`${API_BASE_URL}/exams/${examId}`, {
       method: "PUT",
       headers: authHeaders(token),
       body: JSON.stringify(payload),
@@ -835,7 +953,7 @@ export async function updateExamRequest(
 
 export async function deleteExamRequest(examId: number, token?: string): Promise<boolean> {
   try {
-    const res = await fetch(`${API_BASE_URL}/exams/${examId}`, {
+    const res = await authenticatedFetch(`${API_BASE_URL}/exams/${examId}`, {
       method: "DELETE",
       headers: authHeaders(token),
     });
@@ -908,7 +1026,7 @@ export async function createQuestionRequest(
   token?: string
 ): Promise<Question | null> {
   try {
-    const res = await fetch(`${API_BASE_URL}/questions`, {
+    const res = await authenticatedFetch(`${API_BASE_URL}/questions`, {
       method: "POST",
       headers: authHeaders(token),
       body: JSON.stringify(payload),
@@ -923,7 +1041,7 @@ export async function createQuestionRequest(
 
 export async function deleteQuestionRequest(questionId: number, token?: string): Promise<boolean> {
   try {
-    const res = await fetch(`${API_BASE_URL}/questions/${questionId}`, {
+    const res = await authenticatedFetch(`${API_BASE_URL}/questions/${questionId}`, {
       method: "DELETE",
       headers: authHeaders(token),
     });
@@ -969,7 +1087,7 @@ export async function createTestCaseRequest(
   token?: string
 ): Promise<TestCase | null> {
   try {
-    const res = await fetch(`${API_BASE_URL}/test-cases`, {
+    const res = await authenticatedFetch(`${API_BASE_URL}/test-cases`, {
       method: "POST",
       headers: authHeaders(token),
       body: JSON.stringify(payload),
@@ -984,7 +1102,7 @@ export async function createTestCaseRequest(
 
 export async function deleteTestCaseRequest(testCaseId: number, token?: string): Promise<boolean> {
   try {
-    const res = await fetch(`${API_BASE_URL}/test-cases/${testCaseId}`, {
+    const res = await authenticatedFetch(`${API_BASE_URL}/test-cases/${testCaseId}`, {
       method: "DELETE",
       headers: authHeaders(token),
     });
@@ -1002,7 +1120,7 @@ export async function submitCodeRequest(
   token?: string
 ): Promise<number | null> {
   try {
-    const res = await fetch(`${API_BASE_URL}/submissions`, {
+    const res = await authenticatedFetch(`${API_BASE_URL}/submissions`, {
       method: "POST",
       headers: authHeaders(token),
       body: JSON.stringify({
@@ -1051,7 +1169,7 @@ export async function fetchSubmissionResult(
   token?: string
 ): Promise<BackendSubmissionResult | null> {
   try {
-    const res = await fetch(`${API_BASE_URL}/results/${submissionId}`, {
+    const res = await authenticatedFetch(`${API_BASE_URL}/results/${submissionId}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!res.ok) return null;
@@ -1064,7 +1182,7 @@ export async function fetchSubmissionResult(
 /** POST /submissions/{id}/regrade — requeue a submission for real backend grading. */
 export async function regradeRequest(submissionId: number, token?: string): Promise<boolean> {
   try {
-    const res = await fetch(`${API_BASE_URL}/submissions/${submissionId}/regrade`, {
+    const res = await authenticatedFetch(`${API_BASE_URL}/submissions/${submissionId}/regrade`, {
       method: "POST",
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });

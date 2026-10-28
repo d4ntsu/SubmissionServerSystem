@@ -108,7 +108,7 @@ const STORAGE_KEYS = {
 };
 
 export function SocketProvider({ children }: { children: React.ReactNode }) {
-  const { token, logout } = useAuth();
+  const { token } = useAuth();
   const [isConnected, setIsConnected] = useState(true);
   const [announcements, setAnnouncements] = useState<Announcement[]>(MOCK_ANNOUNCEMENTS);
   const [activeAnnouncement, setActiveAnnouncement] = useState<Announcement | null>(null);
@@ -247,16 +247,13 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
             ? error.message
             : "Could not load exam data from the backend. Retry when the server is available."
         );
-        if (error instanceof ApiError && error.status === 401) {
-          logout("Your session was rejected by the backend. Please sign in again.");
-        }
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [token, examDataRetryCount, logout]);
+  }, [token, examDataRetryCount]);
 
   useEffect(() => {
     if (!storageReady || typeof window === "undefined") return;

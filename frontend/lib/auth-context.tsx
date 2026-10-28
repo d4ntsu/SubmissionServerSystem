@@ -2,14 +2,23 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { User, UserRole } from "@/types";
-import { ApiError, loginRequest, fetchCurrentUser } from "./api";
+import {
+  ApiError,
+  fetchCurrentUser,
+  loginRequest,
+  logoutRequest,
+  refreshAccessToken,
+  setAccessToken,
+  subscribeAccessToken,
+  subscribeSessionExpired,
+} from "./api";
 
 interface AuthContextType {
   user: User | null;
   role: UserRole;
   token: string | null;
   login: (username: string, password: string, role?: UserRole) => Promise<User>;
-  logout: (reason?: string) => void;
+  logout: () => Promise<void>;
   retrySession: () => Promise<void>;
   sessionError: string | null;
   isTeacher: boolean;
@@ -30,6 +39,15 @@ function clearAuthCookie() {
   document.cookie = `${AUTH_COOKIE}=; path=/; max-age=0; samesite=lax`;
 }
 
+function clearLegacyCredentials() {
+  try {
+    localStorage.removeItem("lan_exam_user");
+    localStorage.removeItem("lan_exam_token");
+  } catch (error) {
+    console.warn("Could not remove legacy browser-stored auth data.", error);
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -38,67 +56,55 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const clearSession = useCallback(() => {
     setUser(null);
-    setToken(null);
+    setAccessToken(null);
     clearAuthCookie();
-    localStorage.removeItem("lan_exam_user");
-    localStorage.removeItem("lan_exam_token");
+    clearLegacyCredentials();
   }, []);
 
   const restoreSession = useCallback(async () => {
     setIsLoading(true);
     setSessionError(null);
     setUser(null);
-    setToken(null);
+    setAccessToken(null);
     clearAuthCookie();
-
-    let savedToken: string | null;
-    try {
-      savedToken = localStorage.getItem("lan_exam_token");
-    } catch {
-      setSessionError("Browser storage is unavailable. Sign in again after enabling local storage.");
-      setIsLoading(false);
-      return;
-    }
-
-    if (!savedToken) {
-      try {
-        clearSession();
-      } catch {
-        setSessionError("Could not clear the expired local session. Please clear browser storage and retry.");
-      }
-      setIsLoading(false);
-      return;
-    }
+    clearLegacyCredentials();
 
     try {
-      const profile = await fetchCurrentUser(savedToken);
-      localStorage.setItem("lan_exam_user", JSON.stringify(profile));
+      const accessToken = await refreshAccessToken();
+      const profile = await fetchCurrentUser(accessToken);
       setUser(profile);
-      setToken(savedToken);
       setAuthCookie(profile.role);
     } catch (error) {
-      setUser(null);
-      setToken(null);
-      clearAuthCookie();
-
-      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
-        try {
-          clearSession();
-        } catch {
-          setSessionError("Your saved session was rejected, but browser storage could not be cleared.");
-          setIsLoading(false);
-          return;
-        }
-        setSessionError("Your saved session is no longer valid. Please sign in again.");
-      } else {
-        setSessionError(
-          "Could not verify your saved session with the backend. You are signed out; retry verification when the backend is available."
-        );
+      clearSession();
+      if (error instanceof ApiError && error.status === 401) {
+        return;
       }
+      if (error instanceof ApiError && error.status === 404) {
+        setSessionError(
+          "The backend does not have the /auth/refresh endpoint. Update or restart the backend, then retry session verification."
+        );
+        return;
+      }
+      setSessionError(
+        "Could not verify your session because the backend is unavailable. You are signed out; retry when it is available."
+      );
     } finally {
       setIsLoading(false);
     }
   }, [clearSession]);
+
+  useEffect(() => {
+    const unsubscribeToken = subscribeAccessToken(setToken);
+    const unsubscribeExpired = subscribeSessionExpired(() => {
+      setUser(null);
+      clearAuthCookie();
+      setSessionError("Your session expired or was revoked. Please sign in again.");
+    });
+    return () => {
+      unsubscribeToken();
+      unsubscribeExpired();
+    };
+  }, []);
 
   useEffect(() => {
     void restoreSession();
@@ -120,26 +126,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           `This account's backend role is ${profile.role}. Select ${profile.role} login to continue.`
         );
       }
-
-      localStorage.setItem("lan_exam_user", JSON.stringify(profile));
-      localStorage.setItem("lan_exam_token", result.access_token);
+      setAccessToken(result.access_token);
       setUser(profile);
-      setToken(result.access_token);
       setAuthCookie(profile.role);
       return profile;
     } catch (error) {
+      try {
+        await logoutRequest();
+      } catch (revokeError) {
+        console.error("Could not revoke the refresh session after login failed.", revokeError);
+      }
       clearSession();
       throw error;
     }
   };
 
-  const logout = useCallback(
-    (reason?: string) => {
-      clearSession();
-      setSessionError(reason ?? null);
-    },
-    [clearSession]
-  );
+  const logout = useCallback(async () => {
+    clearSession();
+    setSessionError(null);
+    try {
+      await logoutRequest();
+    } catch (error) {
+      console.error("Local sign-out completed, but backend session revocation failed.", error);
+      setSessionError(
+        "You were signed out on this device, but the backend could not confirm session revocation. Check your connection."
+      );
+    }
+  }, [clearSession]);
 
   const role: UserRole = user?.role || "student";
   const isTeacher = user?.role === "teacher";
