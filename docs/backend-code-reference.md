@@ -20,7 +20,8 @@ backend/app/
 │   ├── questions.py                 # CRUD /questions
 │   ├── test_cases.py                # CRUD /test-cases
 │   ├── submissions.py               # POST /submissions, GET /submissions
-│   └── results.py                   # GET /results/{id}, GET /results/exam/{id}
+│   ├── results.py                   # GET /results/{id}, GET /results/exam/{id}
+│   └── realtime.py                  # Authenticated realtime WebSocket endpoint
 ├── models/
 │   ├── user.py                      # User ORM model
 │   ├── exam.py                      # Exam ORM model
@@ -37,10 +38,14 @@ backend/app/
 ├── services/
 │   ├── auth.py                      # User lookup & authentication
 │   ├── dependencies.py              # FastAPI dependency callables (auth guards)
-│       ├── submission_service.py    # Submission validation & persistence
-│       ├── grading_service.py      # Grading orchestration (Piston integration)
-│       ├── java_method_grader.py   # Java reflection harness and argument validation
-│       └── piston_client.py        # Async HTTP client for Piston API v2
+│   ├── submission_service.py        # Submission validation & persistence
+│   ├── grading_service.py           # Grading orchestration (Piston integration)
+│   ├── java_method_grader.py        # Java reflection harness and argument validation
+│   └── piston_client.py             # Async HTTP client for Piston API v2
+├── realtime/
+│   ├── bridge.py                    # Authenticated TCP bridge to the Java realtime server
+│   ├── event_router.py              # Dispatches events received from Java
+│   └── manager.py                   # FastAPI WebSocket connections and event delivery
 └── workers/
     └── grading_worker.py            # Background polling worker for grading queue
 ```
@@ -53,7 +58,7 @@ backend/app/
 ```python
 app = FastAPI(title="LAN Programming Exam System", version="0.1.0")
 ```
-The FastAPI application instance. Registers CORS middleware and six routers (`auth`, `exams`, `questions`, `test_cases`, `submissions`, `results`).
+The FastAPI application instance. Registers seven routers (`auth`, `exams`, `questions`, `test_cases`, `submissions`, `results`, `realtime`).
 
 ### `start_grading_worker()`
 ```python
@@ -61,6 +66,17 @@ The FastAPI application instance. Registers CORS middleware and six routers (`au
 async def start_grading_worker()
 ```
 **Lifecycle hook** — runs on server startup. Creates an `asyncio.Event` as a stop signal and spawns `run_grading_worker()` as a background `asyncio.Task`. The worker polls the database for queued submissions independently of HTTP request handlers.
+
+### `start_realtime_bridge()`
+**Lifecycle hook** — connects the TCP bridge to the Java realtime server using `socket_server_host`, `socket_server_port`, and `socket_server_shared_secret`. The bridge performs a challenge-response handshake. If the first connection fails, the application continues starting and the bridge retries in the background.
+
+### `stop_realtime_bridge()`
+**Lifecycle hook** — disconnects and cancels the bridge retry task during application shutdown.
+
+### Realtime bridge connection warnings
+`app.realtime.bridge` logs `Java realtime connection unavailable: <ExceptionType>` when a connection or handshake attempt fails. The log intentionally records only the exception class, not message content or credentials; it does not identify the precise cause. The bridge retries with exponential backoff, starting at 1 second and capped at 30 seconds. A missing FastAPI shared secret disables the bridge and logs a separate warning.
+
+For service authentication, FastAPI and the Java server must have the same non-empty shared secret. Configure `SOCKET_SERVER_SHARED_SECRET` for both processes (Java also accepts `SHARED_SECRET` or `auth.shared_secret` in `server.properties`). A missing Java secret or a mismatch causes the Java server to reject authentication and close the TCP connection. This commonly appears as paired Java connection/rejection/disconnection logs alongside repeated FastAPI bridge warnings. Browser clients connect through FastAPI's WebSocket endpoint; they do not authenticate directly to this TCP bridge.
 
 ### `stop_grading_worker()`
 ```python
@@ -135,6 +151,7 @@ Pydantic `BaseSettings` class that reads from environment variables and a `.env`
 | `piston_run_memory_limit_bytes` | `268435456` (256 MiB) | Runtime memory limit |
 | `socket_server_host` | `"127.0.0.1"` | Java Socket server host (Phase 5) |
 | `socket_server_port` | `9000` | Java Socket server port (Phase 5) |
+| `socket_server_shared_secret` | `None` | Shared secret for FastAPI-to-Java TCP challenge-response authentication; bridge is disabled when unset |
 | `cors_origins` | `"http://localhost:3000"` | Allowed CORS origins (comma-separated) |
 
 ### `settings`

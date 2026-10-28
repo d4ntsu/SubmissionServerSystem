@@ -472,57 +472,50 @@ Official references:
 
 ## 12. Implementation Plan
 
-Build incrementally. Do not attempt all advanced features at once.
+Build incrementally. Do not attempt all advanced features at once. The status below reflects the implementation and verification completed so far; it distinguishes implemented work from final deployment acceptance.
 
 ### Phase 1 — Environment validation
-- Verify Windows, Docker Desktop, and WSL2 compatibility.
-- Run Piston locally, install the required language runtimes, and test a small Java program. The Java 15.0.2 Piston smoke test has passed; offline operation still requires explicit testing.
-- Confirm that the selected languages work with Internet disconnected after setup.
-- Create the repository and environment configuration.
+- **Status: Implemented; offline verification remains.**
+- Piston is configured locally, Java is installed, and Java execution has been smoke-tested through Piston.
+- Resource limits and the Java method-grader runtime requirements have been configured and exercised.
+- Still to verify: the complete application works with Internet disconnected after all images and runtimes have been prepared.
 
 ### Phase 2 — Backend foundation
-- Create FastAPI application and SQLite/SQLAlchemy setup.
-- Implement user models, authentication, and role checks.
-- Implement exam and question CRUD APIs.
-- Add schema validation and backend tests.
+- **Status: Implemented.**
+- FastAPI, SQLite/SQLAlchemy persistence, authentication, role checks, exam/question/test-case APIs, and request validation are present.
+- Backend tests cover the principal API and lifecycle behavior.
 
 ### Phase 3 — Basic submission and grading
-- Implement student exam pages and code submission.
-- Persist submissions before grading.
-- Add a recoverable background worker.
-- Integrate the Piston client for standard input/output questions.
-- Store test-level results and calculate scores.
-
-Current status: the Piston client and its unit tests exist; submission endpoints, durable grading worker, and scoring flow are still to be implemented.
+- **Status: Implemented.**
+- Submissions are validated and persisted before a database-backed worker grades them through Piston.
+- Standard input/output and result persistence/scoring are implemented, including recovery handling for queued or interrupted work.
+- Java standard-I/O execution has been exercised against the configured Piston service.
 
 ### Phase 4 — Frontend completion
-- Implement teacher exam/question management and result views.
-- Implement student exam, editor/submission, and result views.
-- Show loading, errors, submission state, and exam deadlines clearly.
+- **Status: Implemented; continue validating UX as features evolve.**
+- Teacher exam/question management and result views, and student exam/submission/result flows, are present.
+- Loading, submission state, and error handling are implemented; production builds have been verified.
 
 ### Phase 5 — Socket Programming
-- Confirm whether the course requires Java Socket specifically.
-- Define the message protocol first.
-- Implement the Java TCP server if required.
-- Integrate FastAPI with the realtime service.
-- Add teacher announcements, exam lifecycle events, online/offline status, and submission-status notifications.
-- Test multiple concurrent clients, disconnections, reconnects, malformed messages, and unauthorized event attempts.
+- **Status: Implemented; service authentication/configuration needs verification in the current environment.**
+- The Java TCP server uses framed JSON messages, authenticated service/user sessions, validation, routing, and connection lifecycle handling.
+- FastAPI provides the browser WebSocket endpoint and an optional authenticated TCP bridge to Java.
+- Exam and submission realtime events, presence, announcements, and protocol tests are implemented.
+- **Current operational issue:** FastAPI bridge logs `Java realtime connection unavailable: ConnectionError` and Java logs rejected authentication. Verify that both processes use the same non-empty `SOCKET_SERVER_SHARED_SECRET` and matching host/port, then restart both services.
+- Still to verify in the deployment environment: sustained multi-client operation and reconnect behavior across service restarts.
 
-### Java Reflection grading
-- Implement and test the Java harness separately with sample classes.
-- Integrate class/method questions with Piston.
-- Test signature mismatch, overloaded methods, exceptions, invalid return values, and multiple test cases.
-- Verify hidden-test handling and multi-file compilation behavior.
+### Phase 6 — Java Reflection grading
+- **Status: Implemented and exercised.**
+- The Java reflection harness supports class/method questions, configured method contracts, test arguments, and hidden-test handling.
+- Java method questions are graded through Piston. The `ArrayUtils.findSecondLargest(int[])` cases were exercised successfully, and Piston resource caps were adjusted for the harness.
+- Focused grader tests and the frontend production build passed during implementation.
 
 ### Phase 7 — Deployment and final testing
-- Add startup/shutdown scripts and deployment documentation.
-- Test teacher and student devices on the same LAN.
-- Test a disconnected Internet environment.
-- Test server restart and queued-job recovery.
-- Test concurrent submissions and failure cases.
-- Review security and remove sample credentials/data.
+- **Status: In progress.**
+- Startup/deployment instructions and service configuration are documented.
+- Still to complete: end-to-end testing from teacher/student devices on the LAN, offline verification, restart and queued-job recovery checks, concurrent-submission/failure testing, and final security/configuration review.
 
-A short academic deadline may require moving Java class/method grading or other advanced features to a later phase. Prioritize a stable end-to-end MVP.
+The core grading and realtime features are implemented. Prioritize resolving the current realtime bridge configuration issue and completing Phase 7 end-to-end acceptance before treating the system as deployment-ready.
 
 ## 13. Definition of Done
 
