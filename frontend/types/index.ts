@@ -31,6 +31,7 @@ export interface Question {
   exam_id: number;
   title: string;
   description: string;
+  boilerplate?: string | null;
   points: number;
   question_type: QuestionType;
   time_limit: number;

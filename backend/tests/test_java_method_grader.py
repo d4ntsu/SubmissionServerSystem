@@ -19,6 +19,8 @@ def test_builds_static_java_method_harness_and_uses_test_case_arguments():
     student_file, harness, stdin = build_method_harness(question, test_case)
 
     assert student_file == "Calculator.java"
+    assert "public class Main" in harness
+    assert "public static void main(String[] args)" in harness
     assert 'getDeclaredMethod(\n            "evaluateExpression"' in harness
     assert "String.class, int.class, int.class" in harness
     assert "Modifier.isStatic(method.getModifiers())" in harness

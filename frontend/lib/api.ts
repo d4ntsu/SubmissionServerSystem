@@ -75,6 +75,23 @@ function httpError(action: string, response: Response): ApiError {
   );
 }
 
+async function detailedHttpError(action: string, response: Response): Promise<ApiError> {
+  let detail = "";
+  try {
+    const body: unknown = await response.clone().json();
+    if (isRecord(body) && typeof body.detail === "string") {
+      detail = body.detail;
+    }
+  } catch {
+    // Keep the HTTP status as the actionable fallback when the error body is not JSON.
+  }
+  return new ApiError(
+    `${action} failed with HTTP ${response.status}${detail ? `: ${detail}` : ""}.`,
+    "http",
+    response.status
+  );
+}
+
 async function readJson<T>(response: Response, action: string): Promise<T> {
   try {
     return (await response.json()) as T;
@@ -849,6 +866,7 @@ export interface CreateQuestionPayload {
   exam_id: number;
   title: string;
   description?: string;
+  boilerplate?: string;
   question_type?: "stdio" | "java_class";
   max_score?: number;
   allowed_languages?: string;
@@ -880,6 +898,7 @@ export type BackendQuestion = {
   class_name: string | null;
   method_signature: string | null;
   method_mode: "STATIC" | "INSTANCE";
+  boilerplate?: string | null;
   created_at?: string | null;
 };
 
@@ -896,6 +915,7 @@ export function toFrontendQuestion(q: BackendQuestion): Question {
     exam_id: q.exam_id,
     title: q.title,
     description: q.description,
+    boilerplate: q.boilerplate ?? "",
     points: q.max_score,
     question_type: toFrontendQuestionType(q.question_type),
     time_limit: 2,
@@ -912,18 +932,47 @@ export function toFrontendQuestion(q: BackendQuestion): Question {
 export async function createQuestionRequest(
   payload: CreateQuestionPayload,
   token?: string
-): Promise<Question | null> {
+): Promise<Question> {
   try {
     const res = await fetch(`${API_BASE_URL}/questions`, {
       method: "POST",
       headers: authHeaders(token),
       body: JSON.stringify(payload),
     });
-    if (!res.ok) return null;
-    const data = await res.json();
+    if (!res.ok) throw httpError("Creating question", res);
+    const data = await readJson<BackendQuestion>(res, "Creating question");
     return toFrontendQuestion(data);
   } catch (err) {
-    return null;
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(
+      "Creating question could not reach the backend. Check the connection and retry.",
+      "network"
+    );
+  }
+}
+
+export type UpdateQuestionPayload = Partial<Omit<CreateQuestionPayload, "exam_id">>;
+
+export async function updateQuestionRequest(
+  questionId: number,
+  payload: UpdateQuestionPayload,
+  token?: string
+): Promise<Question> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/questions/${questionId}`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw httpError("Updating question", res);
+    const data = await readJson<BackendQuestion>(res, "Updating question");
+    return toFrontendQuestion(data);
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(
+      "Updating question could not reach the backend. Check the connection and retry.",
+      "network"
+    );
   }
 }
 
@@ -1010,7 +1059,7 @@ export async function submitCodeRequest(
   language: string,
   sourceCode: string,
   token?: string
-): Promise<number | null> {
+): Promise<number> {
   try {
     const res = await fetch(`${API_BASE_URL}/submissions`, {
       method: "POST",
@@ -1021,11 +1070,18 @@ export async function submitCodeRequest(
         source_code: sourceCode,
       }),
     });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data?.id ?? null;
+    if (!res.ok) throw await detailedHttpError("Submitting code", res);
+    const data: unknown = await readJson(res, "Submitting code");
+    if (!isRecord(data) || typeof data.id !== "number") {
+      throw new ApiError("Submitting code returned an invalid response.", "invalid_response", res.status);
+    }
+    return data.id;
   } catch (err) {
-    return null;
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(
+      "Submitting code could not reach the backend. Check the connection and retry.",
+      "network"
+    );
   }
 }
 
@@ -1059,27 +1115,35 @@ export interface BackendSubmissionResult {
 export async function fetchSubmissionResult(
   submissionId: number,
   token?: string
-): Promise<BackendSubmissionResult | null> {
+): Promise<BackendSubmissionResult> {
   try {
     const res = await fetch(`${API_BASE_URL}/results/${submissionId}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
-    if (!res.ok) return null;
-    return await res.json();
+    if (!res.ok) throw await detailedHttpError("Loading grading results", res);
+    return await readJson<BackendSubmissionResult>(res, "Loading grading results");
   } catch (err) {
-    return null;
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(
+      "Loading grading results could not reach the backend. Check the connection and retry.",
+      "network"
+    );
   }
 }
 
 /** POST /submissions/{id}/regrade — requeue a submission for real backend grading. */
-export async function regradeRequest(submissionId: number, token?: string): Promise<boolean> {
+export async function regradeRequest(submissionId: number, token?: string): Promise<void> {
   try {
     const res = await fetch(`${API_BASE_URL}/submissions/${submissionId}/regrade`, {
       method: "POST",
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
-    return res.ok;
+    if (!res.ok) throw await detailedHttpError("Re-queuing submission", res);
   } catch (err) {
-    return false;
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(
+      "Re-queuing submission could not reach the backend. Check the connection and retry.",
+      "network"
+    );
   }
 }

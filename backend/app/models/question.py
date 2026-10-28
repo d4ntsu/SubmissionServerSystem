@@ -18,6 +18,7 @@ class Question(Base):
     exam_id = Column(Integer, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False)
     title = Column(String(200), nullable=False)
     description = Column(Text, default="")
+    boilerplate = Column(Text, nullable=False, default="")
     question_type = Column(Enum(QuestionType), default=QuestionType.stdio, nullable=False)
     max_score = Column(Float, nullable=False, default=100.0)
     allowed_languages = Column(String(200), default="java")

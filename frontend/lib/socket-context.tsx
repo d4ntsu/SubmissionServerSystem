@@ -36,7 +36,8 @@ import {
     toBackendQuestionType,
     toBackendLanguage,
     updateExamRequest,
-    BackendSubmissionResult,
+      updateQuestionRequest,
+      BackendSubmissionResult,
     ApiError,
   } from "./api";
 import { gradeSubmissionLocally } from "./grading";
@@ -89,7 +90,7 @@ interface SocketContextType {
   setExamPassword: (id: number, password: string | null) => void;
   questions: Record<number, Question[]>;
     createQuestion: (examId: number, data: Partial<Question>) => Promise<Question>;
-  updateQuestion: (examId: number, questionId: number, data: Partial<Question>) => void;
+  updateQuestion: (examId: number, questionId: number, data: Partial<Question>) => Promise<void>;
   deleteQuestion: (examId: number, questionId: number) => void;
   testCases: Record<number, TestCase[]>;
     createTestCase: (questionId: number, data: Partial<TestCase>) => Promise<TestCase>;
@@ -626,6 +627,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       exam_id: examId,
       title: data.title || `Problem ${existing.length + 1}: New Challenge`,
       description: data.description || "Provide problem requirements, input/output constraints here.",
+      boilerplate: data.boilerplate ?? "",
       points: data.points || 25,
       question_type: data.question_type || "STDIN_STDOUT",
       time_limit: data.time_limit || 2,
@@ -644,6 +646,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
             exam_id: examId,
             title: newQ.title,
             description: newQ.description,
+            boilerplate: newQ.boilerplate ?? "",
             question_type: toBackendQuestionType(newQ.question_type),
             max_score: newQ.points,
             allowed_languages: toBackendLanguage(newQ.language),
@@ -655,24 +658,22 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
           },
           token
         );
-        if (created) {
-          setQuestions((prev) => ({
-            ...prev,
-            [examId]: [...(prev[examId] || []), created],
-          }));
-          setExams((prev) =>
-            prev.map((e) => {
-              if (e.id === examId) {
-                const count = (e.questions_count || 0) + 1;
-                const points = (e.total_points || 0) + created.points;
-                return { ...e, questions_count: count, total_points: points };
-              }
-              return e;
-            })
-          );
-          addLog("EVENT", "Question Manager", `Added Question #${created.id} ("${created.title}") to Exam #${examId}`);
-          return created;
-        }
+        setQuestions((prev) => ({
+          ...prev,
+          [examId]: [...(prev[examId] || []), created],
+        }));
+        setExams((prev) =>
+          prev.map((e) => {
+            if (e.id === examId) {
+              const count = (e.questions_count || 0) + 1;
+              const points = (e.total_points || 0) + created.points;
+              return { ...e, questions_count: count, total_points: points };
+            }
+            return e;
+          })
+        );
+        addLog("EVENT", "Question Manager", `Added Question #${created.id} ("${created.title}") to Exam #${examId}`);
+        return created;
       }
 
       setQuestions((prev) => ({
@@ -696,11 +697,49 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       return newQ;
     };
 
-  const updateQuestion = (examId: number, questionId: number, data: Partial<Question>) => {
+  const updateQuestion = async (
+    examId: number,
+    questionId: number,
+    data: Partial<Question>
+  ): Promise<void> => {
+    const currentQuestion = (questions[examId] || []).find((question) => question.id === questionId);
+    if (!currentQuestion) {
+      throw new Error(`Question #${questionId} could not be found in this exam.`);
+    }
+
+    const updatedQuestion = { ...currentQuestion, ...data };
+    let questionToStore = updatedQuestion;
+    if (token) {
+      const persistedQuestion = await updateQuestionRequest(
+        questionId,
+        {
+          title: updatedQuestion.title,
+          description: updatedQuestion.description,
+          boilerplate: updatedQuestion.boilerplate ?? "",
+          question_type: toBackendQuestionType(updatedQuestion.question_type),
+          max_score: updatedQuestion.points,
+          allowed_languages: toBackendLanguage(updatedQuestion.language),
+          class_name: updatedQuestion.class_name ?? null,
+          method_signature: updatedQuestion.method_name
+            ? `${updatedQuestion.method_name}(${updatedQuestion.parameter_types ?? ""}): ${updatedQuestion.return_type || "int"}`
+            : null,
+          method_mode: updatedQuestion.method_mode || "STATIC",
+        },
+        token
+      );
+      questionToStore = {
+        ...persistedQuestion,
+        time_limit: updatedQuestion.time_limit,
+        show_result_to_student: updatedQuestion.show_result_to_student,
+      };
+    }
+
     clearExamVerification(examId);
     setQuestions((prev) => ({
       ...prev,
-      [examId]: (prev[examId] || []).map((q) => (q.id === questionId ? { ...q, ...data } : q)),
+      [examId]: (prev[examId] || []).map((question) =>
+        question.id === questionId ? questionToStore : question
+      ),
     }));
     addLog("EVENT", "Question Manager", `Updated Question #${questionId}`);
   };
@@ -856,35 +895,37 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       return initialSub;
     }
 
-      // Mark as running immediately (for real grading: submission transitioned by the worker).
-      setTimeout(() => {
-        setSubmissions((prev) =>
-          prev.map((s) => (s.id === newSubId ? { ...s, status: "running" } : s))
-        );
-        addLog("INFO", "Grading Worker", `Submission #${newSubId} is being evaluated...`);
-      }, 900);
-
-      // Attempt real backend grading; fall back to local heuristic grading when offline.
       if (token) {
-        // Reset the running placeholder so the outcome below can use the same id.
-        const realSubId = await submitCodeRequest(
-          data.question_id,
-          question.language,
-          data.source_code,
-          token
-        );
+        let backendSubmissionId: number | null = null;
+        try {
+          const realSubId = await submitCodeRequest(
+            data.question_id,
+            question.language,
+            data.source_code,
+            token
+          );
+          backendSubmissionId = realSubId;
+          const acceptedSub: Submission = {
+            ...initialSub,
+            id: realSubId,
+            status: "queued",
+          };
+          setSubmissions((prev) =>
+            prev.map((submission) =>
+              submission.id === newSubId ? acceptedSub : submission
+            )
+          );
 
-        if (realSubId !== null) {
           let result: BackendSubmissionResult | null = null;
           let deadline = Date.now() + 30000; // up to 30s for Piston grading
           while (Date.now() < deadline) {
             result = await fetchSubmissionResult(realSubId, token);
-            const status = result?.submission?.status;
+            const status = result.submission.status;
             if (status === "completed" || status === "error") break;
             await new Promise((resolve) => setTimeout(resolve, 1500));
           }
 
-          if (result) {
+          if (result?.submission.status === "completed" || result?.submission.status === "error") {
             const backendSub: Submission = {
               id: realSubId,
               student_id: data.student_id,
@@ -921,7 +962,11 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
                 message: tr.message,
               })),
             };
-            setSubmissions((prev) => prev.map((s) => (s.id === newSubId ? backendSub : s)));
+            setSubmissions((prev) =>
+              prev.map((submission) =>
+                submission.id === realSubId ? backendSub : submission
+              )
+            );
 
             const failed = backendSub.status === "error";
             addNotification({
@@ -941,10 +986,74 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
             );
             return backendSub;
           }
+
+          const pendingSub: Submission = {
+            ...acceptedSub,
+            status: result?.submission.status === "running" ? "running" : "queued",
+            max_score: result?.submission.max_score ?? acceptedSub.max_score,
+          };
+          setSubmissions((prev) =>
+            prev.map((submission) =>
+              submission.id === realSubId ? pendingSub : submission
+            )
+          );
+          addNotification({
+            title: "Grading Still in Progress",
+            message: `Submission #${realSubId} was accepted and is still being graded. Refresh the result later.`,
+            type: "submission",
+            priority: "info",
+          });
+          addLog(
+            "INFO",
+            "Grading Worker",
+            `Submission #${realSubId} remains ${pendingSub.status} after the polling window.`
+          );
+          return pendingSub;
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "The backend returned an unknown error.";
+          const accepted = backendSubmissionId !== null;
+          const failedSub: Submission = {
+            ...initialSub,
+            id: backendSubmissionId ?? newSubId,
+            status: accepted ? "running" : "error",
+            error_summary: accepted
+              ? `Submission #${backendSubmissionId} was accepted, but its grading status could not be retrieved: ${message}`
+              : `The backend could not accept this submission: ${message}`,
+          };
+          setSubmissions((prev) =>
+            prev.map((submission) =>
+              submission.id === (backendSubmissionId ?? newSubId) ||
+              submission.id === newSubId
+                ? failedSub
+                : submission
+            )
+          );
+          addNotification({
+            title: accepted ? "Grading Status Unavailable" : "Submission Failed",
+            message: failedSub.error_summary || message,
+            type: "submission",
+            priority: "warning",
+          });
+          addLog(
+            "WARN",
+            "Grading Worker",
+            `Submission #${failedSub.id}: ${failedSub.error_summary}`
+          );
+          return failedSub;
         }
       }
 
-      // Offline fallback: local heuristic grading.
+      // Offline demo mode uses heuristic grading only when no backend session exists.
+      setTimeout(() => {
+        setSubmissions((prev) =>
+          prev.map((submission) =>
+            submission.id === newSubId ? { ...submission, status: "running" } : submission
+          )
+        );
+        addLog("INFO", "Grading Worker", `Submission #${newSubId} is being evaluated offline...`);
+      }, 900);
+
       setTimeout(() => {
         const outcome = gradeSubmissionLocally(
           newSubId,
@@ -1012,19 +1121,20 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     );
     addLog("INFO", "Admin Trigger", `Teacher triggered re-grade for submission #${id}`);
 
-      // Real backend regrade when online.
       if (token) {
-        const ok = await regradeRequest(id, token);
-        if (ok) {
+        let accepted = false;
+        try {
+          await regradeRequest(id, token);
+          accepted = true;
           let result: BackendSubmissionResult | null = null;
           let deadline = Date.now() + 30000;
           while (Date.now() < deadline) {
             result = await fetchSubmissionResult(id, token);
-            const status = result?.submission?.status;
+            const status = result.submission.status;
             if (status === "completed" || status === "error") break;
             await new Promise((resolve) => setTimeout(resolve, 1500));
           }
-          if (result) {
+          if (result?.submission.status === "completed" || result?.submission.status === "error") {
             const updated: Submission = {
               ...target,
               status: result.submission.status as Submission["status"],
@@ -1068,6 +1178,44 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
             addLog("SUBMISSION", "Grading Worker", `Re-grade completed for #${id}. Score: ${updated.score}/${target.max_score}`);
             return;
           }
+          const pendingStatus =
+            result?.submission.status === "running" ? "running" : "queued";
+          setSubmissions((prev) =>
+            prev.map((submission) =>
+              submission.id === id
+                ? { ...submission, status: pendingStatus, error_summary: null }
+                : submission
+            )
+          );
+          addNotification({
+            title: "Re-grade Still in Progress",
+            message: `Submission #${id} remains ${pendingStatus}. Refresh the result later.`,
+            type: "system",
+          });
+          return;
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "The backend returned an unknown error.";
+          setSubmissions((prev) =>
+            prev.map((submission) =>
+              submission.id === id
+                ? {
+                    ...submission,
+                    status: accepted ? "running" : "error",
+                    error_summary: accepted
+                      ? `Re-grade was accepted, but its status could not be retrieved: ${message}`
+                      : `The backend could not re-queue this submission: ${message}`,
+                  }
+                : submission
+            )
+          );
+          addNotification({
+            title: accepted ? "Re-grade Status Unavailable" : "Re-grade Failed",
+            message: `Submission #${id}: ${message}`,
+            type: "system",
+          });
+          addLog("WARN", "Grading Worker", `Re-grade failed for #${id}: ${message}`);
+          return;
         }
       }
 

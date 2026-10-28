@@ -354,6 +354,8 @@ The Java grading flow:
 5. Compare returned values with expected results.
 6. Produce a structured grading result for the Python backend.
 
+Teachers can provide optional starter code per question. For Java class/method questions, the starter code should contain the required class and method, not a `main` method: the backend generates a separate `Main.java` runner from the question contract and test-case arguments. Students receive the question's boilerplate on first open and when they reset their editor. If the teacher leaves it blank, the editor starts blank; changes to the boilerplate do not overwrite code a student has already entered.
+
 Current implementation details:
 - Reflection is not a security sandbox. Student code must still run inside Piston or another appropriately isolated environment.
 - Do not expose hidden expected values or hidden tests in files or source code accessible to students.

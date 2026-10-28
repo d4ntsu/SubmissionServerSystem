@@ -9,6 +9,7 @@ class QuestionCreate(BaseModel):
     exam_id: int
     title: str = Field(..., min_length=1, max_length=200)
     description: str = Field(default="")
+    boilerplate: str = ""
     question_type: QuestionType = QuestionType.stdio
     max_score: float = Field(default=100.0, gt=0)
     allowed_languages: str = "java"
@@ -20,6 +21,7 @@ class QuestionCreate(BaseModel):
 class QuestionUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = None
+    boilerplate: str | None = None
     question_type: QuestionType | None = None
     max_score: float | None = Field(default=None, gt=0)
     allowed_languages: str | None = None
@@ -33,6 +35,7 @@ class QuestionResponse(BaseModel):
     exam_id: int
     title: str
     description: str
+    boilerplate: str = ""
     question_type: QuestionType
     max_score: float
     allowed_languages: str

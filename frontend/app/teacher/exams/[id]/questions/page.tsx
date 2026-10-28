@@ -74,6 +74,8 @@ export default function TeacherQuestionsManagementPage() {
   const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
   const [qTitle, setQTitle] = useState("");
   const [qDesc, setQDesc] = useState("");
+  const [qBoilerplate, setQBoilerplate] = useState("");
+  const [questionError, setQuestionError] = useState("");
   const [qPoints, setQPoints] = useState(30);
   const [qType, setQType] = useState<QuestionType>("STDIN_STDOUT");
   const [qLanguage, setQLanguage] = useState<CodingLanguage>("java");
@@ -101,6 +103,8 @@ export default function TeacherQuestionsManagementPage() {
     setEditingQuestion(null);
     setQTitle(`Problem ${examQuestions.length + 1}: `);
     setQDesc("");
+    setQBoilerplate("");
+    setQuestionError("");
     setQPoints(30);
     setQType("STDIN_STDOUT");
     setQLanguage("java");
@@ -118,6 +122,8 @@ export default function TeacherQuestionsManagementPage() {
     setEditingQuestion(q);
     setQTitle(q.title);
     setQDesc(q.description);
+    setQBoilerplate(q.boilerplate ?? "");
+    setQuestionError("");
     setQPoints(q.points);
     setQType(q.question_type);
     setQLanguage(q.language || "java");
@@ -131,43 +137,52 @@ export default function TeacherQuestionsManagementPage() {
     setIsQuestionModalOpen(true);
   };
 
-  const handleSaveQuestion = (e: React.FormEvent) => {
+  const handleSaveQuestion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!qTitle.trim()) return;
+    setQuestionError("");
 
-    if (editingQuestion) {
-      updateQuestion(examId, editingQuestion.id, {
-        title: qTitle,
-        description: qDesc,
-        points: Number(qPoints),
-        question_type: qType,
-        language: qType === "JAVA_CLASS_METHOD" ? "java" : qLanguage,
-        time_limit: Number(qTimeLimit),
-        show_result_to_student: qShowResult,
-        class_name: qType === "JAVA_CLASS_METHOD" ? qClassName : null,
-        method_name: qType === "JAVA_CLASS_METHOD" ? qMethodName : null,
-        method_mode: qType === "JAVA_CLASS_METHOD" ? qMethodMode : null,
-        return_type: qType === "JAVA_CLASS_METHOD" ? qReturnType : null,
-        parameter_types: qType === "JAVA_CLASS_METHOD" ? qParamTypes : null,
-      });
-    } else {
-      createQuestion(examId, {
-        title: qTitle,
-        description: qDesc,
-        points: Number(qPoints),
-        question_type: qType,
-        language: qType === "JAVA_CLASS_METHOD" ? "java" : qLanguage,
-        time_limit: Number(qTimeLimit),
-        show_result_to_student: qShowResult,
-        class_name: qType === "JAVA_CLASS_METHOD" ? qClassName : null,
-        method_name: qType === "JAVA_CLASS_METHOD" ? qMethodName : null,
-        method_mode: qType === "JAVA_CLASS_METHOD" ? qMethodMode : null,
-        return_type: qType === "JAVA_CLASS_METHOD" ? qReturnType : null,
-        parameter_types: qType === "JAVA_CLASS_METHOD" ? qParamTypes : null,
-      });
+    try {
+      if (editingQuestion) {
+        await updateQuestion(examId, editingQuestion.id, {
+          title: qTitle,
+          description: qDesc,
+          boilerplate: qBoilerplate,
+          points: Number(qPoints),
+          question_type: qType,
+          language: qType === "JAVA_CLASS_METHOD" ? "java" : qLanguage,
+          time_limit: Number(qTimeLimit),
+          show_result_to_student: qShowResult,
+          class_name: qType === "JAVA_CLASS_METHOD" ? qClassName : null,
+          method_name: qType === "JAVA_CLASS_METHOD" ? qMethodName : null,
+          method_mode: qType === "JAVA_CLASS_METHOD" ? qMethodMode : null,
+          return_type: qType === "JAVA_CLASS_METHOD" ? qReturnType : null,
+          parameter_types: qType === "JAVA_CLASS_METHOD" ? qParamTypes : null,
+        });
+      } else {
+        await createQuestion(examId, {
+          title: qTitle,
+          description: qDesc,
+          boilerplate: qBoilerplate,
+          points: Number(qPoints),
+          question_type: qType,
+          language: qType === "JAVA_CLASS_METHOD" ? "java" : qLanguage,
+          time_limit: Number(qTimeLimit),
+          show_result_to_student: qShowResult,
+          class_name: qType === "JAVA_CLASS_METHOD" ? qClassName : null,
+          method_name: qType === "JAVA_CLASS_METHOD" ? qMethodName : null,
+          method_mode: qType === "JAVA_CLASS_METHOD" ? qMethodMode : null,
+          return_type: qType === "JAVA_CLASS_METHOD" ? qReturnType : null,
+          parameter_types: qType === "JAVA_CLASS_METHOD" ? qParamTypes : null,
+        });
+      }
+
+      setIsQuestionModalOpen(false);
+    } catch (error) {
+      setQuestionError(
+        error instanceof Error ? error.message : "The question could not be saved."
+      );
     }
-
-    setIsQuestionModalOpen(false);
   };
 
   const openAddTestCase = (questionId: number) => {
@@ -714,6 +729,26 @@ export default function TeacherQuestionsManagementPage() {
                   </div>
                 )}
 
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
+                    Student Boilerplate
+                  </label>
+                  <textarea
+                    rows={10}
+                    spellCheck={false}
+                    value={qBoilerplate}
+                    onChange={(e) => setQBoilerplate(e.target.value)}
+                    placeholder="Optional starter code shown to students. Leave blank for an empty editor."
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded text-slate-900 resize-y font-mono text-xs leading-relaxed"
+                  />
+                  <p className="mt-1 text-[10px] text-slate-500">
+                    Students receive this code on first open and when they Reset. Existing student
+                    code is preserved.{" "}
+                    {qType === "JAVA_CLASS_METHOD" &&
+                      "The grader generates a hidden Main.java runner; provide only the class and method here."}
+                  </p>
+                </div>
+
                 {/* Resource Limits */}
                 <div>
                   <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
@@ -785,6 +820,11 @@ export default function TeacherQuestionsManagementPage() {
                 </div>
 
                 <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+                  {questionError && (
+                    <p role="alert" className="mr-auto text-xs text-red-700">
+                      {questionError}
+                    </p>
+                  )}
                   <button
                     type="button"
                     onClick={() => setIsQuestionModalOpen(false)}

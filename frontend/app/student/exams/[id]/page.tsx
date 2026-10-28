@@ -15,7 +15,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useSocket } from "@/lib/socket-context";
 import { MOCK_QUESTIONS, MOCK_TEST_CASES } from "@/lib/api";
 import { gradeSampleTests, hasAnswer } from "@/lib/grading";
-import { CodingLanguage, Question, QuestionType, TestCase } from "@/types";
+import { Question, TestCase } from "@/types";
 import {
   AlertTriangle,
   CheckCircle,
@@ -35,50 +35,8 @@ import {
   Terminal,
 } from "lucide-react";
 
-const CODE_TEMPLATES: Record<CodingLanguage, Record<QuestionType, string>> = {
-  java: {
-    STDIN_STDOUT: `import java.util.Scanner;
-
-public class Solution {
-    public static void main(String[] args) {
-        Scanner scanner = new Scanner(System.in);
-        // Implement your solution here
-        
-    }
-}`,
-    JAVA_CLASS_METHOD: `public class Calculator {
-    /**
-     * Required method implementation for grading harness
-     */
-    public static int evaluateExpression(String op, int a, int b) {
-        // Implement your solution here
-        return 0;
-    }
-}`,
-  },
-  python: {
-    STDIN_STDOUT: `import sys
-
-def main():
-    lines = sys.stdin.read().splitlines()
-    # Implement your solution here
-    pass
-
-if __name__ == "__main__":
-    main()`,
-    JAVA_CLASS_METHOD: `class Calculator:
-    @staticmethod
-    def evaluateExpression(op: str, a: int, b: int) -> int:
-        # Implement your solution here
-        return 0`,
-  },
-};
-
 function templateFor(question: Question): string {
-  return (
-    CODE_TEMPLATES[question.language]?.[question.question_type] ||
-    CODE_TEMPLATES.java.STDIN_STDOUT
-  );
+  return question.boilerplate ?? "";
 }
 
 function isQuestionConfigured(question: Question, cases: TestCase[]): boolean {
@@ -948,7 +906,7 @@ export default function ExamWorkspacePage() {
                       type="button"
                       onClick={handleResetCode}
                       className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white transition-colors"
-                      title="Reset to the instructor-provided starter template"
+                      title="Reset to the teacher-provided starter code, or blank if none was provided"
                     >
                       <RotateCcw className="w-3 h-3" />
                       Reset

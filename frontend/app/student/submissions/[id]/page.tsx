@@ -143,7 +143,7 @@ export default function StudentResultsViewPage() {
                 </span>
                 <span className="text-[11px] text-red-700">{submission.error_summary}</span>
                 <span className="block text-[11px] text-red-600 mt-1">
-                  Contact your instructor if the problem statement is missing expected test answers.
+                  If this error was unexpected, share the details above with your instructor.
                 </span>
               </div>
             </div>

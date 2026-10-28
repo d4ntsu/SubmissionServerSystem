@@ -82,10 +82,41 @@ class TestQuestionEndpoints:
         exam_id = resp.json()["id"]
 
         resp = client.post("/questions", json={
-            "exam_id": exam_id, "title": "Q1", "question_type": "stdio",
+            "exam_id": exam_id,
+            "title": "Q1",
+            "question_type": "stdio",
+            "boilerplate": "class Main {}",
         }, headers={"Authorization": f"Bearer {teacher_token}"})
         assert resp.status_code == 201
         assert resp.json()["title"] == "Q1"
+        assert resp.json()["boilerplate"] == "class Main {}"
+
+    def test_update_question_boilerplate_persists(self, client, teacher_token):
+        headers = {"Authorization": "Bearer " + teacher_token}
+        exam = client.post(
+            "/exams",
+            json={"title": "Boilerplate Exam"},
+            headers=headers,
+        )
+        question = client.post(
+            "/questions",
+            json={"exam_id": exam.json()["id"], "title": "Starter code"},
+            headers=headers,
+        )
+
+        updated = client.put(
+            f"/questions/{question.json()['id']}",
+            json={"boilerplate": "public class Solution {}"},
+            headers=headers,
+        )
+        fetched = client.get(
+            f"/questions/{question.json()['id']}",
+            headers=headers,
+        )
+
+        assert updated.status_code == 200
+        assert updated.json()["boilerplate"] == "public class Solution {}"
+        assert fetched.json()["boilerplate"] == "public class Solution {}"
 
     def test_create_java_method_question_persists_method_mode(self, client, teacher_token):
         headers = {"Authorization": "Bearer " + teacher_token}
@@ -109,6 +140,7 @@ class TestQuestionEndpoints:
 
         assert response.status_code == 201
         assert response.json()["method_mode"] == "INSTANCE"
+        assert response.json()["boilerplate"] == ""
 
     def test_list_by_exam(self, client, teacher_token):
         resp = client.get("/questions?exam_id=1", headers={"Authorization": f"Bearer {teacher_token}"})

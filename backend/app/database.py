@@ -67,3 +67,7 @@ def run_lightweight_migrations() -> None:
                 connection.execute(
                     text("ALTER TABLE questions ADD COLUMN method_mode VARCHAR(10) NOT NULL DEFAULT 'STATIC'")
                 )
+            if "boilerplate" not in columns:
+                connection.execute(
+                    text("ALTER TABLE questions ADD COLUMN boilerplate TEXT NOT NULL DEFAULT ''")
+                )

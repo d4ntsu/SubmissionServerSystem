@@ -76,6 +76,8 @@ def update_question(
     question = _get_question_or_404(db, question_id)
     _require_question_owner(db, question, current_user)
     update_data = data.model_dump(exclude_unset=True)
+    if "boilerplate" in update_data and update_data["boilerplate"] is None:
+        update_data["boilerplate"] = ""
     for key, value in update_data.items():
         setattr(question, key, value)
     db.commit()
