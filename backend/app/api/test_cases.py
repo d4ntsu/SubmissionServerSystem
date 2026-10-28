@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.exam import Exam
+from app.models.question import Question
 from app.models.test_case import TestCase
 from app.models.user import User, UserRole
 from app.schemas.test_case import TestCaseCreate, TestCaseResponse
@@ -10,12 +12,25 @@ from app.services.dependencies import get_current_user, require_role
 router = APIRouter(prefix="/test-cases", tags=["test_cases"])
 
 
+def _require_question_owner(db: Session, question_id: int, teacher: User) -> Question:
+    question = db.get(Question, question_id)
+    if not question:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found")
+    exam = db.get(Exam, question.exam_id)
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+    if exam.teacher_id != teacher.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your exam")
+    return question
+
+
 @router.post("", response_model=TestCaseResponse, status_code=status.HTTP_201_CREATED)
 def create_test_case(
     data: TestCaseCreate,
     current_user: User = Depends(require_role(UserRole.teacher)),
     db: Session = Depends(get_db),
 ):
+    _require_question_owner(db, data.question_id, current_user)
     if not data.expected_output.strip():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -47,5 +62,6 @@ def delete_test_case(
     test_case = db.get(TestCase, test_case_id)
     if not test_case:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test case not found")
+    _require_question_owner(db, test_case.question_id, current_user)
     db.delete(test_case)
     db.commit()

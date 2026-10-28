@@ -1,15 +1,17 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { User, UserRole } from "@/types";
-import { loginRequest, fetchCurrentUser } from "./api";
+import { ApiError, loginRequest, fetchCurrentUser } from "./api";
 
 interface AuthContextType {
   user: User | null;
   role: UserRole;
   token: string | null;
-  login: (username: string, password: string, role?: UserRole) => Promise<User | null>;
-  logout: () => void;
+  login: (username: string, password: string, role?: UserRole) => Promise<User>;
+  logout: (reason?: string) => void;
+  retrySession: () => Promise<void>;
+  sessionError: string | null;
   isTeacher: boolean;
   isStudent: boolean;
   isAuthenticated: boolean;
@@ -32,67 +34,117 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [sessionError, setSessionError] = useState<string | null>(null);
 
-  useEffect(() => {
-    // Check local storage for persistent session
-    const savedUser = localStorage.getItem("lan_exam_user");
-      const savedToken = localStorage.getItem("lan_exam_token");
-      if (savedUser) {
-        try {
-          const parsed = JSON.parse(savedUser);
-          if (parsed?.role === "teacher" || parsed?.role === "student") {
-            setUser(parsed);
-            setToken(savedToken || "auth_token_" + parsed.role);
-            setAuthCookie(parsed.role);
-          } else {
-            localStorage.removeItem("lan_exam_user");
-            localStorage.removeItem("lan_exam_token");
-            clearAuthCookie();
-          }
-        } catch (e) {
-          localStorage.removeItem("lan_exam_user");
-          localStorage.removeItem("lan_exam_token");
-          clearAuthCookie();
-        }
-      } else {
-        clearAuthCookie();
+  const clearSession = useCallback(() => {
+    setUser(null);
+    setToken(null);
+    clearAuthCookie();
+    localStorage.removeItem("lan_exam_user");
+    localStorage.removeItem("lan_exam_token");
+  }, []);
+
+  const restoreSession = useCallback(async () => {
+    setIsLoading(true);
+    setSessionError(null);
+    setUser(null);
+    setToken(null);
+    clearAuthCookie();
+
+    let savedToken: string | null;
+    try {
+      savedToken = localStorage.getItem("lan_exam_token");
+    } catch {
+      setSessionError("Browser storage is unavailable. Sign in again after enabling local storage.");
+      setIsLoading(false);
+      return;
+    }
+
+    if (!savedToken) {
+      try {
+        clearSession();
+      } catch {
+        setSessionError("Could not clear the expired local session. Please clear browser storage and retry.");
       }
       setIsLoading(false);
-    }, []);
+      return;
+    }
+
+    try {
+      const profile = await fetchCurrentUser(savedToken);
+      localStorage.setItem("lan_exam_user", JSON.stringify(profile));
+      setUser(profile);
+      setToken(savedToken);
+      setAuthCookie(profile.role);
+    } catch (error) {
+      setUser(null);
+      setToken(null);
+      clearAuthCookie();
+
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        try {
+          clearSession();
+        } catch {
+          setSessionError("Your saved session was rejected, but browser storage could not be cleared.");
+          setIsLoading(false);
+          return;
+        }
+        setSessionError("Your saved session is no longer valid. Please sign in again.");
+      } else {
+        setSessionError(
+          "Could not verify your saved session with the backend. You are signed out; retry verification when the backend is available."
+        );
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }, [clearSession]);
+
+  useEffect(() => {
+    void restoreSession();
+  }, [restoreSession]);
 
   const login = async (
     username: string,
     password: string,
-    role: UserRole = "student"
-    ): Promise<User | null> => {
-      // Real backend authentication (JWT)
+    selectedRole: UserRole = "student"
+  ): Promise<User> => {
+    setSessionError(null);
+    clearSession();
+
+    try {
       const result = await loginRequest(username, password);
-      if (!result) return null;
-
       const profile = await fetchCurrentUser(result.access_token);
-      if (!profile) return null;
+      if (profile.role !== selectedRole) {
+        throw new Error(
+          `This account's backend role is ${profile.role}. Select ${profile.role} login to continue.`
+        );
+      }
 
-      // The role is authoritative from the backend profile
-      setUser(profile);
-      setToken(result.access_token);
       localStorage.setItem("lan_exam_user", JSON.stringify(profile));
       localStorage.setItem("lan_exam_token", result.access_token);
+      setUser(profile);
+      setToken(result.access_token);
       setAuthCookie(profile.role);
       return profile;
-    };
+    } catch (error) {
+      clearSession();
+      throw error;
+    }
+  };
 
-  const logout = () => {
-    setUser(null);
-    setToken(null);
-    localStorage.removeItem("lan_exam_user");
-      localStorage.removeItem("lan_exam_token");
-      clearAuthCookie();
-    };
+  const logout = useCallback(
+    (reason?: string) => {
+      clearSession();
+      setSessionError(reason ?? null);
+    },
+    [clearSession]
+  );
 
   const role: UserRole = user?.role || "student";
   const isTeacher = user?.role === "teacher";
   const isStudent = user?.role === "student";
-  const isAuthenticated = !!user;
+  const isAuthenticated = !!user && !!token;
 
   return (
     <AuthContext.Provider
@@ -102,6 +154,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         token,
         login,
         logout,
+        retrySession: restoreSession,
+        sessionError,
         isTeacher,
         isStudent,
         isAuthenticated,

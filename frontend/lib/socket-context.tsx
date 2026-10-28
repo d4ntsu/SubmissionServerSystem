@@ -37,6 +37,7 @@ import {
     toBackendLanguage,
     updateExamRequest,
     BackendSubmissionResult,
+    ApiError,
   } from "./api";
 import { gradeSubmissionLocally } from "./grading";
 import { useAuth } from "./auth-context";
@@ -77,6 +78,8 @@ interface SocketContextType {
 
   // Exam & Questions Management
   exams: Exam[];
+  dataApiError: string | null;
+  retryExamData: () => void;
     createExam: (data: Partial<Exam> & { access_password?: string }) => Promise<Exam>;
     updateExam: (id: number, data: Partial<Exam> & { access_password?: string | null }) => Promise<void>;
     setExamStatus: (id: number, status: ExamStatus) => Promise<void>;
@@ -105,7 +108,7 @@ const STORAGE_KEYS = {
 };
 
 export function SocketProvider({ children }: { children: React.ReactNode }) {
-  const { token } = useAuth();
+  const { token, logout } = useAuth();
   const [isConnected, setIsConnected] = useState(true);
   const [announcements, setAnnouncements] = useState<Announcement[]>(MOCK_ANNOUNCEMENTS);
   const [activeAnnouncement, setActiveAnnouncement] = useState<Announcement | null>(null);
@@ -139,6 +142,8 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     }
   });
   const [storageReady, setStorageReady] = useState(false);
+  const [dataApiError, setDataApiError] = useState<string | null>(null);
+  const [examDataRetryCount, setExamDataRetryCount] = useState(0);
   const nextSubmissionId = useRef(500 + MOCK_SUBMISSIONS.length + 1);
 
   useEffect(() => {
@@ -199,47 +204,59 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     setStorageReady(true);
   }, []);
 
-      // Fetch real exams/questions/test-cases from the backend API when logged in.
-      // LocalStorage (demo) state is treated as the offline fallback.
-      useEffect(() => {
-        if (!token) return;
-        let cancelled = false;
+  // Load backend data only for verified sessions; failures must not leave demo data looking authoritative.
+  useEffect(() => {
+    if (!token) {
+      setDataApiError(null);
+      return;
+    }
 
-        (async () => {
-          try {
-            const realExams = await fetchExams(token);
-            if (!cancelled && realExams.length > 0) {
-              setExams(realExams);
-              setQuestions({});
-              setTestCases({});
+    let cancelled = false;
+    setDataApiError(null);
+    setExams([]);
+    setQuestions({});
+    setTestCases({});
 
-              // Load questions + test cases for each real exam.
-              const qByExam: Record<number, Question[]> = {};
-              const tcByQ: Record<number, TestCase[]> = {};
-              for (const exam of realExams) {
-                const qs = await fetchQuestionsByExam(exam.id, token);
-                if (!Array.isArray(qs) || qs.length === 0) continue;
-                qByExam[exam.id] = qs.map(toFrontendQuestion);
-                for (const q of qs) {
-                  const tcs = await fetchTestCasesByQuestion(q.id, token);
-                  if (!Array.isArray(tcs) || tcs.length === 0) continue;
-                  tcByQ[q.id] = tcs.map(toFrontendTestCase);
-                }
-              }
-              if (!cancelled) {
-                setQuestions((prev) => ({ ...prev, ...qByExam }));
-                setTestCases((prev) => ({ ...prev, ...tcByQ }));
-              }
-            }
-          } catch {
-            // Backend unavailable — keep the demo/localStorage fallback.
+    (async () => {
+      try {
+        const realExams = await fetchExams(token);
+        const qByExam: Record<number, Question[]> = {};
+        const tcByQ: Record<number, TestCase[]> = {};
+
+        for (const exam of realExams) {
+          const qs = await fetchQuestionsByExam(exam.id, token);
+          qByExam[exam.id] = qs.map(toFrontendQuestion);
+          for (const question of qs) {
+            const testCases = await fetchTestCasesByQuestion(question.id, token);
+            tcByQ[question.id] = testCases.map(toFrontendTestCase);
           }
-        })();
+        }
 
-        return () => {
-          cancelled = true;
-        };
-      }, [token]);
+        if (!cancelled) {
+          setExams(realExams);
+          setQuestions(qByExam);
+          setTestCases(tcByQ);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        setExams([]);
+        setQuestions({});
+        setTestCases({});
+        setDataApiError(
+          error instanceof Error
+            ? error.message
+            : "Could not load exam data from the backend. Retry when the server is available."
+        );
+        if (error instanceof ApiError && error.status === 401) {
+          logout("Your session was rejected by the backend. Please sign in again.");
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, examDataRetryCount, logout]);
 
   useEffect(() => {
     if (!storageReady || typeof window === "undefined") return;
@@ -1122,6 +1139,8 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
         // Exam & Questions Management
         exams,
+        dataApiError,
+        retryExamData: () => setExamDataRetryCount((count) => count + 1),
         createExam,
         updateExam,
         setExamStatus,
@@ -1139,6 +1158,21 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
+      {dataApiError && (
+        <div
+          role="alert"
+          className="fixed bottom-4 right-4 z-50 max-w-md rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-800 shadow-lg"
+        >
+          <p>{dataApiError}</p>
+          <button
+            type="button"
+            onClick={() => setExamDataRetryCount((count) => count + 1)}
+            className="mt-2 font-bold underline"
+          >
+            Retry loading exam data
+          </button>
+        </div>
+      )}
     </SocketContext.Provider>
   );
 }

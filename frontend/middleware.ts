@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const AUTH_COOKIE = "lan_exam_role";
+const isUserRole = (role: string | undefined): role is "student" | "teacher" =>
+  role === "student" || role === "teacher";
 
 const isProtectedPath = (pathname: string) =>
   pathname === "/dashboard" ||
@@ -13,7 +15,8 @@ const isProtectedPath = (pathname: string) =>
 
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
-  const role = request.cookies.get(AUTH_COOKIE)?.value;
+  const cookieRole = request.cookies.get(AUTH_COOKIE)?.value;
+  const role = isUserRole(cookieRole) ? cookieRole : undefined;
 
   if (pathname === "/") {
     const url = request.nextUrl.clone();

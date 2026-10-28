@@ -85,12 +85,17 @@ def create_submission(
 
 
 def get_submission(db: Session, submission_id: int, current_user: User) -> Submission | None:
-    """Fetch a submission, enforcing that students can only see their own."""
+    """Fetch a submission, enforcing student ownership and teacher exam ownership."""
     submission = db.get(Submission, submission_id)
     if not submission:
         return None
     if current_user.role == UserRole.student and submission.student_id != current_user.id:
         return None
+    if current_user.role == UserRole.teacher:
+        question = db.get(Question, submission.question_id)
+        exam = db.get(Exam, question.exam_id) if question else None
+        if not exam or exam.teacher_id != current_user.id:
+            return None
     return submission
 
 
@@ -99,14 +104,16 @@ def list_submissions(
     current_user: User,
     exam_id: int | None = None,
 ) -> list[Submission]:
-    """List submissions. Students see only their own; teachers see all for their exams."""
+    """List submissions. Students see their own; teachers see submissions for their exams."""
     query = db.query(Submission)
     if current_user.role == UserRole.student:
         query = query.filter(Submission.student_id == current_user.id)
+    elif current_user.role == UserRole.teacher:
+        query = query.join(Question, Submission.question_id == Question.id).join(
+            Exam, Question.exam_id == Exam.id
+        ).filter(Exam.teacher_id == current_user.id)
     if exam_id is not None:
-        query = query.join(Question, Submission.question_id == Question.id).filter(
-            Question.exam_id == exam_id
-        )
+        query = query.filter(Submission.question.has(Question.exam_id == exam_id))
     return query.order_by(Submission.submitted_at.desc()).all()
 
 

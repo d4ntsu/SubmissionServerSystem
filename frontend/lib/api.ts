@@ -36,34 +36,96 @@ export interface LoginResult {
   token_type?: string;
 }
 
+export type ApiErrorKind = "http" | "network" | "invalid_response";
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly kind: ApiErrorKind,
+    readonly status?: number
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isLoginResult(value: unknown): value is LoginResult {
+  return isRecord(value) && typeof value.access_token === "string" && value.access_token.length > 0;
+}
+
+function isUser(value: unknown): value is User {
+  return (
+    isRecord(value) &&
+    typeof value.id === "number" &&
+    typeof value.username === "string" &&
+    typeof value.full_name === "string" &&
+    (value.role === "student" || value.role === "teacher")
+  );
+}
+
+function httpError(action: string, response: Response): ApiError {
+  return new ApiError(
+    `${action} failed with HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}.`,
+    "http",
+    response.status
+  );
+}
+
+async function readJson<T>(response: Response, action: string): Promise<T> {
+  try {
+    return (await response.json()) as T;
+  } catch {
+    throw new ApiError(`${action} returned an invalid response.`, "invalid_response", response.status);
+  }
+}
+
 export async function loginRequest(
   username: string,
   password: string
-): Promise<LoginResult | null> {
+): Promise<LoginResult> {
   try {
     const res = await fetch(`${API_BASE_URL}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
     });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!data?.access_token) return null;
+    if (!res.ok) throw httpError("Login", res);
+    const data: unknown = await readJson(res, "Login");
+    if (!isLoginResult(data)) {
+      throw new ApiError("Login returned an invalid response.", "invalid_response", res.status);
+    }
     return data;
   } catch (err) {
-    return null;
+    if (err instanceof ApiError) throw err;
+    throw new ApiError("Login could not reach the backend. Check the connection and retry.", "network");
   }
 }
 
-export async function fetchCurrentUser(token: string): Promise<User | null> {
+export async function fetchCurrentUser(token: string): Promise<User> {
   try {
     const res = await fetch(`${API_BASE_URL}/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) return null;
-    return await res.json();
+    if (!res.ok) throw httpError("Session verification", res);
+    const data: unknown = await readJson(res, "Session verification");
+    if (!isUser(data)) {
+      throw new ApiError(
+        "Session verification returned an invalid user profile.",
+        "invalid_response",
+        res.status
+      );
+    }
+    return data;
   } catch (err) {
-    return null;
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(
+      "Session verification could not reach the backend. Check the connection and retry.",
+      "network"
+    );
   }
 }
 
@@ -621,20 +683,22 @@ export const MOCK_EVENT_LOGS: RealtimeEventLog[] = [
   },
 ];
 
-// Helper to interact with API or fallback
+// Authenticated data requests must report backend failures rather than present demo records.
 export async function fetchExams(token?: string): Promise<Exam[]> {
   try {
     const res = await fetch(`${API_BASE_URL}/exams`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) return data;
+    if (!res.ok) throw httpError("Loading exams", res);
+    const data: unknown = await readJson(res, "Loading exams");
+    if (!Array.isArray(data)) {
+      throw new ApiError("Loading exams returned an invalid response.", "invalid_response", res.status);
     }
+    return data as Exam[];
   } catch (err) {
-    // Return fallback for demo
+    if (err instanceof ApiError) throw err;
+    throw new ApiError("Loading exams could not reach the backend. Check the connection and retry.", "network");
   }
-  return MOCK_EXAMS;
 }
 
 export async function fetchExamById(examId: number, token?: string): Promise<Exam | undefined> {
@@ -642,9 +706,13 @@ export async function fetchExamById(examId: number, token?: string): Promise<Exa
     const res = await fetch(`${API_BASE_URL}/exams/${examId}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
-    if (res.ok) return await res.json();
-  } catch (err) {}
-  return MOCK_EXAMS.find((e) => e.id === examId);
+    if (res.status === 404) return undefined;
+    if (!res.ok) throw httpError("Loading the exam", res);
+    return await readJson<Exam>(res, "Loading the exam");
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    throw new ApiError("Loading the exam could not reach the backend. Check the connection and retry.", "network");
+  }
 }
 
 export async function fetchQuestionsByExam(
@@ -655,22 +723,23 @@ export async function fetchQuestionsByExam(
     const res = await fetch(`${API_BASE_URL}/questions?exam_id=${examId}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data)) return data;
+    if (!res.ok) throw httpError("Loading exam questions", res);
+    const data: unknown = await readJson(res, "Loading exam questions");
+    if (!Array.isArray(data)) {
+      throw new ApiError(
+        "Loading exam questions returned an invalid response.",
+        "invalid_response",
+        res.status
+      );
     }
-  } catch (err) {}
-  return (MOCK_QUESTIONS[examId] || []).map((q) => ({
-    id: q.id,
-    exam_id: q.exam_id,
-    title: q.title,
-    description: q.description,
-    question_type: q.question_type === "JAVA_CLASS_METHOD" ? "java_class" : "stdio",
-    max_score: q.points,
-    allowed_languages: q.language,
-    class_name: q.class_name ?? null,
-    method_signature: q.method_name ? `${q.method_name}(${q.parameter_types ?? ""})` : null,
-  }));
+    return data as BackendQuestion[];
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(
+      "Loading exam questions could not reach the backend. Check the connection and retry.",
+      "network"
+    );
+  }
 }
 
 export async function fetchTestCasesByQuestion(
@@ -681,19 +750,23 @@ export async function fetchTestCasesByQuestion(
     const res = await fetch(`${API_BASE_URL}/test-cases/question/${questionId}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data)) return data;
+    if (!res.ok) throw httpError("Loading question test cases", res);
+    const data: unknown = await readJson(res, "Loading question test cases");
+    if (!Array.isArray(data)) {
+      throw new ApiError(
+        "Loading question test cases returned an invalid response.",
+        "invalid_response",
+        res.status
+      );
     }
-  } catch (err) {}
-  return (MOCK_TEST_CASES[questionId] || []).map((tc) => ({
-    id: tc.id,
-    question_id: tc.question_id,
-    input_data: tc.stdin || "",
-    expected_output: tc.expected_stdout || "",
-    is_hidden: tc.is_sample ? 0 : 1,
-    score_weight: tc.weight,
-  }));
+    return data as BackendTestCase[];
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(
+      "Loading question test cases could not reach the backend. Check the connection and retry.",
+      "network"
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1000,4 +1073,3 @@ export async function regradeRequest(submissionId: number, token?: string): Prom
     return false;
   }
 }
-

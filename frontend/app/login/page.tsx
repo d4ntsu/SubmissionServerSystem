@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useSocket } from "@/lib/socket-context";
 import { UserRole } from "@/types";
+import { ApiError } from "@/lib/api";
 import {
   GraduationCap,
   Shield,
@@ -17,11 +18,17 @@ import {
 
 export default function LoginPage() {
   const router = useRouter();
-  const { user, login, isLoading: isSessionLoading } = useAuth();
+  const {
+    user,
+    login,
+    retrySession,
+    sessionError,
+    isLoading: isSessionLoading,
+  } = useAuth();
   const { addLog } = useSocket();
   const [selectedRole, setSelectedRole] = useState<UserRole>("student");
-  const [username, setUsername] = useState("student_john");
-  const [password, setPassword] = useState("password123");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,38 +45,35 @@ export default function LoginPage() {
 
   const handleRoleSelect = (role: UserRole) => {
     setSelectedRole(role);
-    setError(null);
-    if (role === "student") {
-      setUsername("student_john");
-    } else {
-      setUsername("prof_alan");
-    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
-      e.preventDefault();
-      setError(null);
-      setIsLoading(true);
+    e.preventDefault();
+    setError(null);
+    setIsLoading(true);
 
-      try {
-        const loggedInUser = await login(username, password, selectedRole);
-        if (!loggedInUser) {
-          setError("Login failed. The username and password do not match the selected account.");
-          addLog("WARN", "Login", `Failed sign-in attempt for "${username}" as ${selectedRole}.`);
-          setIsLoading(false);
-          return;
-        }
-        addLog(
-          "EVENT",
-          loggedInUser.full_name,
-          `Logged in to the exam portal as ${selectedRole === "teacher" ? "teacher" : "student"}`
-        );
-        setIsLoading(false);
-      } catch (err) {
-        setError("Login failed. Please try again.");
-        setIsLoading(false);
+    try {
+      const loggedInUser = await login(username, password, selectedRole);
+      addLog(
+        "EVENT",
+        loggedInUser.full_name,
+        `Logged in to the exam portal as ${loggedInUser.role}`
+      );
+    } catch (err) {
+      let message = err instanceof Error ? err.message : "Login failed. Please try again.";
+      if (err instanceof ApiError && err.status === 401) {
+        message = "Invalid username or password.";
+      } else if (err instanceof ApiError && err.kind === "network") {
+        message = "Could not reach the backend. Check that the server is running and try again.";
+      } else if (err instanceof ApiError && err.status && err.status >= 500) {
+        message = "The backend could not complete sign-in. Please try again later.";
       }
-    };
+      setError(message);
+      addLog("WARN", "Login", `Failed sign-in attempt for "${username}" as ${selectedRole}: ${message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col justify-center items-center p-4">
@@ -122,6 +126,24 @@ export default function LoginPage() {
           </div>
         )}
 
+        {sessionError && (
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="mb-4 flex flex-col gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800"
+          >
+            <span>{sessionError}</span>
+            <button
+              type="button"
+              onClick={() => void retrySession()}
+              disabled={isSessionLoading}
+              className="self-start font-bold underline disabled:opacity-50"
+            >
+              {isSessionLoading ? "Verifying session..." : "Retry session verification"}
+            </button>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-[11px] font-bold tracking-wider uppercase text-slate-500 mb-1 font-mono">
@@ -163,7 +185,7 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={isLoading}
+            disabled={isLoading || isSessionLoading}
             className="w-full py-2.5 px-4 rounded bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold tracking-wide shadow-sm transition-all flex items-center justify-center gap-2 mt-2 disabled:opacity-50"
           >
             {isLoading ? (

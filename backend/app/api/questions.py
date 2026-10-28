@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.exam import Exam
 from app.models.question import Question
 from app.models.user import User, UserRole
 from app.schemas.question import QuestionCreate, QuestionResponse, QuestionUpdate
@@ -17,12 +18,26 @@ def _get_question_or_404(db: Session, question_id: int) -> Question:
     return question
 
 
+def _require_exam_owner(db: Session, exam_id: int, teacher: User) -> Exam:
+    exam = db.get(Exam, exam_id)
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+    if exam.teacher_id != teacher.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your exam")
+    return exam
+
+
+def _require_question_owner(db: Session, question: Question, teacher: User) -> None:
+    _require_exam_owner(db, question.exam_id, teacher)
+
+
 @router.post("", response_model=QuestionResponse, status_code=status.HTTP_201_CREATED)
 def create_question(
     data: QuestionCreate,
     current_user: User = Depends(require_role(UserRole.teacher)),
     db: Session = Depends(get_db),
 ):
+    _require_exam_owner(db, data.exam_id, current_user)
     question = Question(**data.model_dump())
     db.add(question)
     db.commit()
@@ -59,6 +74,7 @@ def update_question(
     db: Session = Depends(get_db),
 ):
     question = _get_question_or_404(db, question_id)
+    _require_question_owner(db, question, current_user)
     update_data = data.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(question, key, value)
@@ -74,5 +90,6 @@ def delete_question(
     db: Session = Depends(get_db),
 ):
     question = _get_question_or_404(db, question_id)
+    _require_question_owner(db, question, current_user)
     db.delete(question)
     db.commit()

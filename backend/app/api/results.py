@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.question import Question
+from app.models.exam import Exam
 from app.models.submission import Submission, SubmissionTestResult
 from app.models.user import User, UserRole
 from app.schemas.submission import SubmissionResponse, SubmissionTestResultResponse
@@ -61,6 +61,10 @@ def get_submission_result(
 
     if current_user.role == UserRole.student and submission.student_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found")
+    if current_user.role == UserRole.teacher:
+        exam = db.get(Exam, submission.question.exam_id)
+        if not exam or exam.teacher_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found")
 
     is_student = current_user.role == UserRole.student
     total_weight = sum(
@@ -81,6 +85,9 @@ def get_exam_results(
     current_user: User = Depends(require_role(UserRole.teacher)),
     db: Session = Depends(get_db),
 ):
+    exam = db.get(Exam, exam_id)
+    if not exam or exam.teacher_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
     submissions = (
         db.query(Submission)
         .join(Submission.question)
