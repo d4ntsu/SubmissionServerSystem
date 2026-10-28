@@ -28,7 +28,11 @@ target/
 
 # Database
 *.db
+*.sqlite
 *.sqlite3
+*.db-wal
+*.db-shm
+backup_*_before_cleanup_*.db
 data/
 
 # Environment
