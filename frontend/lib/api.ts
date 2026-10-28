@@ -1,4 +1,4 @@
-import { Exam, Question, TestCase, Submission, User, Announcement, StudentClientStatus, RealtimeEventLog } from "@/types";
+import { Exam, Question, TestCase, Submission, User, UserRole, Announcement, StudentClientStatus, RealtimeEventLog } from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -16,6 +16,20 @@ export const MOCK_USER_STUDENT: User = {
   full_name: "John Doe (SV101)",
   role: "student",
 };
+
+export const DEMO_CREDENTIALS: Record<UserRole, { username: string; password: string }> = {
+  student: { username: "student_john", password: "password123" },
+  teacher: { username: "prof_alan", password: "password123" },
+};
+
+export function isValidDemoCredentials(
+  username: string,
+  password: string,
+  role: UserRole
+): boolean {
+  const expected = DEMO_CREDENTIALS[role];
+  return username === expected.username && password === expected.password;
+}
 
 export const MOCK_EXAMS: Exam[] = [
   {
@@ -534,7 +548,7 @@ export const MOCK_STUDENTS_STATUS: StudentClientStatus[] = [
 export const MOCK_EVENT_LOGS: RealtimeEventLog[] = [
   {
     id: "log-1",
-    timestamp: new Date(Date.now() - 1000 * 12).toLocaleTimeString(),
+    timestamp: new Date(Date.now() - 1000 * 12).toISOString(),
     level: "SUBMISSION",
     source: "FastAPI /submit",
     message: "Student David Kim (192.168.1.105) submitted Java solution for Q101 (Reverse Words)",
@@ -542,28 +556,28 @@ export const MOCK_EVENT_LOGS: RealtimeEventLog[] = [
   },
   {
     id: "log-2",
-    timestamp: new Date(Date.now() - 1000 * 25).toLocaleTimeString(),
+    timestamp: new Date(Date.now() - 1000 * 25).toISOString(),
     level: "EVENT",
     source: "Student Portal",
     message: "Emily Watson (192.168.1.104) started the test \"CS201 Final\" and opened Problem 2",
   },
   {
     id: "log-3",
-    timestamp: new Date(Date.now() - 1000 * 60).toLocaleTimeString(),
+    timestamp: new Date(Date.now() - 1000 * 60).toISOString(),
     level: "EVENT",
     source: "RealtimeBridge",
     message: "Teacher broadcasted announcement 'Clarification on Problem 2' to 5 active clients",
   },
   {
     id: "log-4",
-    timestamp: new Date(Date.now() - 1000 * 140).toLocaleTimeString(),
+    timestamp: new Date(Date.now() - 1000 * 140).toISOString(),
     level: "EVENT",
     source: "Exam Lifecycle",
     message: "Teacher ended test \"CS201 Final\". Student sessions closed and submissions locked",
   },
   {
     id: "log-5",
-    timestamp: new Date(Date.now() - 1000 * 240).toLocaleTimeString(),
+    timestamp: new Date(Date.now() - 1000 * 240).toISOString(),
     level: "SUBMISSION",
     source: "Piston Grader",
     message: "Grading finished for submission #502 (Alice Smith). Score: 40/40. Status: COMPLETED",

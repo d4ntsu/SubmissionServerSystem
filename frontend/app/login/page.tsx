@@ -3,6 +3,8 @@
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
+import { useSocket } from "@/lib/socket-context";
+import { isValidDemoCredentials } from "@/lib/api";
 import { UserRole } from "@/types";
 import {
   GraduationCap,
@@ -11,15 +13,18 @@ import {
   User as UserIcon,
   ArrowRight,
   Sparkles,
+  AlertCircle,
 } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
   const { user, login, isLoading: isSessionLoading } = useAuth();
+  const { addLog } = useSocket();
   const [selectedRole, setSelectedRole] = useState<UserRole>("student");
   const [username, setUsername] = useState("student_john");
   const [password, setPassword] = useState("password123");
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isSessionLoading || !user) return;
@@ -34,6 +39,7 @@ export default function LoginPage() {
 
   const handleRoleSelect = (role: UserRole) => {
     setSelectedRole(role);
+    setError(null);
     if (role === "student") {
       setUsername("student_john");
     } else {
@@ -43,10 +49,28 @@ export default function LoginPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+
+    if (!isValidDemoCredentials(username, password, selectedRole)) {
+      setError("Login failed. The username and password do not match the selected account.");
+      addLog("WARN", "Login", `Failed sign-in attempt for "${username}" as ${selectedRole}.`);
+      return;
+    }
+
     setIsLoading(true);
 
     setTimeout(() => {
-      login(username, selectedRole);
+      const loggedInUser = login(username, password, selectedRole);
+      if (!loggedInUser) {
+        setError("Login failed. The username and password do not match the selected account.");
+        setIsLoading(false);
+        return;
+      }
+      addLog(
+        "EVENT",
+        loggedInUser.full_name,
+        `Logged in to the exam portal as ${selectedRole === "teacher" ? "teacher" : "student"}`
+      );
       setIsLoading(false);
     }, 500);
   };
@@ -61,9 +85,6 @@ export default function LoginPage() {
         <h1 className="text-2xl font-black text-slate-800 tracking-tight">
           LAN PROGRAMMING EXAM SYSTEM
         </h1>
-        <p className="text-xs text-slate-500 font-medium mt-1">
-          Academic Assessment & Isolated Container Grading Portal
-        </p>
       </div>
 
       {/* Boxed Login Container */}
@@ -73,11 +94,10 @@ export default function LoginPage() {
           <button
             type="button"
             onClick={() => handleRoleSelect("student")}
-            className={`flex items-center justify-center gap-2 py-2 px-3 rounded text-xs font-bold transition-all ${
-              selectedRole === "student"
+            className={`flex items-center justify-center gap-2 py-2 px-3 rounded text-xs font-bold transition-all ${selectedRole === "student"
                 ? "bg-white text-orange-600 shadow-xs border border-slate-200"
                 : "text-slate-500 hover:text-slate-800"
-            }`}
+              }`}
           >
             <GraduationCap className="w-4 h-4" />
             Student Login
@@ -85,16 +105,26 @@ export default function LoginPage() {
           <button
             type="button"
             onClick={() => handleRoleSelect("teacher")}
-            className={`flex items-center justify-center gap-2 py-2 px-3 rounded text-xs font-bold transition-all ${
-              selectedRole === "teacher"
+            className={`flex items-center justify-center gap-2 py-2 px-3 rounded text-xs font-bold transition-all ${selectedRole === "teacher"
                 ? "bg-slate-900 text-white shadow-xs"
                 : "text-slate-500 hover:text-slate-800"
-            }`}
+              }`}
           >
             <Shield className="w-4 h-4 text-orange-400" />
             Teacher / Admin
           </button>
         </div>
+
+        {error && (
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="mb-4 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700"
+          >
+            <AlertCircle className="w-4 h-4 mt-px shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -110,7 +140,7 @@ export default function LoginPage() {
                 required
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder={selectedRole === "student" ? "student_john or SV101" : "prof_alan"}
+                placeholder={selectedRole === "student" ? "student_john" : "prof_alan"}
                 className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:bg-white transition-all font-mono"
               />
             </div>
@@ -161,26 +191,24 @@ export default function LoginPage() {
             <button
               type="button"
               onClick={() => handleRoleSelect("student")}
-              className={`p-2.5 rounded border text-left transition-colors ${
-                selectedRole === "student"
+              className={`p-2.5 rounded border text-left transition-colors ${selectedRole === "student"
                   ? "border-orange-500 bg-orange-50/50"
                   : "border-slate-200 hover:border-slate-300 bg-slate-50"
-              }`}
+                }`}
             >
               <div className="font-bold text-slate-800 text-xs">Student Portal</div>
-              <div className="text-[11px] text-slate-500 font-mono">student_john</div>
+              <div className="text-[11px] text-slate-500 font-mono">student_john / password123</div>
             </button>
             <button
               type="button"
               onClick={() => handleRoleSelect("teacher")}
-              className={`p-2.5 rounded border text-left transition-colors ${
-                selectedRole === "teacher"
+              className={`p-2.5 rounded border text-left transition-colors ${selectedRole === "teacher"
                   ? "border-orange-500 bg-orange-50/50"
                   : "border-slate-200 hover:border-slate-300 bg-slate-50"
-              }`}
+                }`}
             >
               <div className="font-bold text-slate-800 text-xs">Teacher Portal</div>
-              <div className="text-[11px] text-slate-500 font-mono">prof_alan</div>
+              <div className="text-[11px] text-slate-500 font-mono">prof_alan / password123</div>
             </button>
           </div>
         </div>

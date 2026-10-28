@@ -8,6 +8,7 @@ import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { MarkdownRenderer } from "@/components/markdown/MarkdownRenderer";
 import { ExamPasswordGate } from "@/components/exam/ExamPasswordGate";
 import { ExamWindowGuard } from "@/components/exam/ExamWindowGuard";
+import { ExamVerificationModal } from "@/components/exam/ExamVerificationModal";
 import { QuestionSidebar } from "@/components/exam/QuestionSidebar";
 import { SubmitReviewModal } from "@/components/exam/SubmitReviewModal";
 import { useAuth } from "@/lib/auth-context";
@@ -22,6 +23,7 @@ import {
   Code2,
   ExternalLink,
   FileWarning,
+  FlaskConical,
   Megaphone,
   PanelRightClose,
   PanelRightOpen,
@@ -91,7 +93,7 @@ function isQuestionConfigured(question: Question, cases: TestCase[]): boolean {
 export default function ExamWorkspacePage() {
   const params = useParams();
   const router = useRouter();
-  const examId = Number(params?.id) || 1;
+  const routeExamId = Number(params?.id) || 1;
   const { user, isTeacher, isStudent } = useAuth();
   const {
     submitCode,
@@ -103,13 +105,13 @@ export default function ExamWorkspacePage() {
     addLog,
     hasExamPassword,
     verifyExamPassword,
+    examVerifications,
   } = useSocket();
 
-  const exam = exams.find((item) => item.id === examId);
-  const questions = allQuestions[examId] || MOCK_QUESTIONS[examId] || [];
-
+  const [selectedExamId, setSelectedExamId] = useState(routeExamId);
   const [currentQIndex, setCurrentQIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<number, string>>({});
+  const [interactedIds, setInteractedIds] = useState<Record<number, boolean>>({});
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [isSubmittingExam, setIsSubmittingExam] = useState(false);
@@ -126,7 +128,15 @@ export default function ExamWorkspacePage() {
   const [broadcastPriority, setBroadcastPriority] = useState<"urgent" | "warning" | "info">(
     "urgent"
   );
-  const [timeLeft, setTimeLeft] = useState((exam?.duration_minutes || 90) * 60);
+  const [timeLeft, setTimeLeft] = useState(90 * 60);
+  const [verificationOpen, setVerificationOpen] = useState(false);
+
+  useEffect(() => {
+    setSelectedExamId(routeExamId);
+  }, [routeExamId]);
+
+  const exam = exams.find((item) => item.id === selectedExamId);
+  const questions = allQuestions[selectedExamId] || MOCK_QUESTIONS[selectedExamId] || [];
 
   const currentQuestion = questions[currentQIndex] || questions[0];
   const currentCode = currentQuestion ? answers[currentQuestion.id] || "" : "";
@@ -189,9 +199,18 @@ export default function ExamWorkspacePage() {
   }, [exam?.id, exam?.title, user, isTeacher, addLog, accessGranted]);
 
   const answeredIds = useMemo(
-    () => questions.filter((question) => hasAnswer(answers[question.id] || "")).map((q) => q.id),
-    [answers, questions]
+    () =>
+      questions
+        .filter(
+          (question) =>
+            Boolean(interactedIds[question.id]) || hasAnswer(answers[question.id] || "")
+        )
+        .map((question) => question.id),
+    [answers, questions, interactedIds]
   );
+
+  const answeredSet = useMemo(() => new Set(answeredIds), [answeredIds]);
+  const isAnswered = (question: Question) => answeredSet.has(question.id);
 
   const formatTime = (seconds: number) => {
     const minutes = Math.floor(seconds / 60);
@@ -213,9 +232,45 @@ export default function ExamWorkspacePage() {
     );
   };
 
+  const handleSelectExam = (id: number) => {
+    if (!isTeacher || id === selectedExamId) return;
+    const nextExam = exams.find((item) => item.id === id);
+    setSelectedExamId(id);
+    setCurrentQIndex(0);
+    setConsoleOutput(null);
+    setConsoleStatus("idle");
+    setSubmitted(false);
+    setSubmittedCount(0);
+    setSubmitError("");
+    setReviewOpen(false);
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", `/student/exams/${id}`);
+    }
+    addLog(
+      "EVENT",
+      "Teacher Preview",
+      `Opened test "${nextExam?.title ?? `Examination #${id}`}" to review all questions`
+    );
+  };
+
+  const markQuestionInteracted = () => {
+    if (!currentQuestion) return;
+    setInteractedIds((previous) =>
+      previous[currentQuestion.id] ? previous : { ...previous, [currentQuestion.id]: true }
+    );
+  };
+
   const updateCode = (value: string) => {
     if (!currentQuestion) return;
+    markQuestionInteracted();
     setAnswers((previous) => ({ ...previous, [currentQuestion.id]: value }));
+  };
+
+  const handleCodeKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const editKeys = ["Backspace", "Delete", "Enter", "Tab"];
+    if (event.key.length === 1 || editKeys.includes(event.key)) {
+      markQuestionInteracted();
+    }
   };
 
   const handleUnlock = (password: string) => {
@@ -225,7 +280,7 @@ export default function ExamWorkspacePage() {
       addLog(
         "WARN",
         user?.full_name || "Student",
-        `Failed password attempt for password-protected test "${exam.title}"`
+        `Entered an incorrect exam password for "${exam.title}"`
       );
       return false;
     }
@@ -235,7 +290,7 @@ export default function ExamWorkspacePage() {
     addLog(
       "EVENT",
       user?.full_name || "Student",
-      `Entered password-protected test "${exam.title}"`
+      `Entered the correct exam password for "${exam.title}"`
     );
     return true;
   };
@@ -391,7 +446,7 @@ export default function ExamWorkspacePage() {
                   {submittedCount} question{submittedCount === 1 ? "" : "s"} were sent for grading.
                   {(() => {
                     const unanswered = questions.filter(
-                      (question) => !hasAnswer(answers[question.id] || "")
+                      (question) => !isAnswered(question)
                     ).length;
                     if (unanswered === 0) return " You will be redirected to your test result shortly.";
                     return ` ${unanswered} unanswered question${
@@ -427,8 +482,29 @@ export default function ExamWorkspacePage() {
             <p className="text-xs text-slate-500">
               This examination does not contain any questions in the database yet.
             </p>
-            <Link href="/dashboard" className="text-xs font-bold text-orange-600 hover:underline">
-              Return to exam dashboard
+            {isTeacher && (
+              <div className="flex items-center justify-center gap-2 pt-1">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono">
+                  Test another exam
+                </label>
+                <select
+                  value={selectedExamId}
+                  onChange={(event) => handleSelectExam(Number(event.target.value))}
+                  className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono max-w-xs"
+                >
+                  {exams.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      #{item.id} — {item.title} ({item.status})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <Link
+              href={isTeacher ? "/teacher/exams" : "/dashboard"}
+              className="text-xs font-bold text-orange-600 hover:underline"
+            >
+              {isTeacher ? "Return to exam management" : "Return to exam dashboard"}
             </Link>
           </div>
         </AppLayout>
@@ -499,10 +575,65 @@ export default function ExamWorkspacePage() {
             </span>
 
             {isTeacher && (
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono">
+                  Exam
+                </label>
+                <select
+                  value={selectedExamId}
+                  onChange={(event) => handleSelectExam(Number(event.target.value))}
+                  className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono max-w-[18rem]"
+                  title="Choose which exam to test"
+                >
+                  {exams.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      #{item.id} — {item.title} ({item.status})
+                    </option>
+                  ))}
+                </select>
+
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono">
+                  Question
+                </label>
+                <select
+                  value={currentQIndex}
+                  onChange={(event) => selectQuestion(Number(event.target.value))}
+                  disabled={questions.length === 0}
+                  className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono max-w-[18rem] disabled:opacity-50"
+                  title="Choose which question to test"
+                >
+                  {questions.map((question, index) => (
+                    <option key={question.id} value={index}>
+                      Q{index + 1} — {question.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {isTeacher && (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold uppercase tracking-wider font-mono">
                 <ShieldCheck className="w-3 h-3" />
                 Teacher preview
               </span>
+            )}
+
+            {isTeacher && (
+              <button
+                type="button"
+                onClick={() => setVerificationOpen(true)}
+                className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 border transition-all ${
+                  examVerifications[exam.id]?.passed
+                    ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                    : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
+                }`}
+                title="Run a reference attempt and verify the exam result before opening it to students"
+              >
+                <FlaskConical className="w-3.5 h-3.5" />
+                <span>
+                  {examVerifications[exam.id]?.passed ? "Exam Verified" : "Test Exam"}
+                </span>
+              </button>
             )}
 
             {isTeacher && (
@@ -828,6 +959,7 @@ export default function ExamWorkspacePage() {
                     <textarea
                       value={currentCode}
                       onChange={(event) => updateCode(event.target.value)}
+                      onKeyDown={handleCodeKeyDown}
                       spellCheck={false}
                       className="w-full h-full p-4 bg-transparent text-slate-100 font-mono text-xs leading-relaxed focus:outline-none resize-none selection:bg-orange-500/30"
                       placeholder="// Enter your solution here..."
@@ -896,10 +1028,17 @@ export default function ExamWorkspacePage() {
           examTitle={exam.title}
           questions={questions}
           answers={answers}
+          answeredIds={answeredIds}
           testCases={allTestCases}
           isSubmitting={isSubmittingExam}
           onClose={() => setReviewOpen(false)}
           onConfirm={handleConfirmSubmit}
+        />
+
+        <ExamVerificationModal
+          examId={exam.id}
+          isOpen={verificationOpen}
+          onClose={() => setVerificationOpen(false)}
         />
       </AppLayout>
     </ProtectedRoute>

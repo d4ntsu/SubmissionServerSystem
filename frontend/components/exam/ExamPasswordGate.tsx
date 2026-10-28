@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft, Clock, Eye, EyeOff, Lock, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Clock, Eye, EyeOff, Lock } from "lucide-react";
 
 interface ExamPasswordGateProps {
   examTitle: string;
@@ -87,14 +87,6 @@ export function ExamPasswordGate({
               <span>{error}</span>
             </div>
           )}
-
-          <div className="rounded border border-slate-200 bg-slate-50 p-2.5 text-[11px] text-slate-500 flex items-start gap-2">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
-            <span>
-              Only students who received the password from the instructor can enter this test.
-              Your teacher is not required to enter a password for preview.
-            </span>
-          </div>
 
           <button
             type="submit"

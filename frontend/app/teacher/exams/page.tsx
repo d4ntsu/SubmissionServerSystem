@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
+import { ExamVerificationModal } from "@/components/exam/ExamVerificationModal";
 import { useSocket } from "@/lib/socket-context";
 import { Exam, ExamStatus } from "@/types";
 import {
@@ -23,11 +24,35 @@ import {
   HelpCircle,
   Lock,
   KeyRound,
+  FlaskConical,
+  ShieldCheck,
 } from "lucide-react";
 
 export default function TeacherExamManagementPage() {
-  const { exams, createExam, updateExam, setExamStatus, deleteExam } = useSocket();
+  const {
+    exams,
+    createExam,
+    updateExam,
+    setExamStatus,
+    deleteExam,
+    examVerifications,
+  } = useSocket();
   const [filter, setFilter] = useState<string>("all");
+  const [verificationExamId, setVerificationExamId] = useState<number | null>(null);
+
+  const startExam = (exam: Exam) => {
+    if (!examVerifications[exam.id]?.passed) {
+      setVerificationExamId(exam.id);
+      return;
+    }
+    setExamStatus(exam.id, "started");
+  };
+
+  const openExamFromVerification = () => {
+    if (verificationExamId === null) return;
+    setExamStatus(verificationExamId, "started");
+    setVerificationExamId(null);
+  };
 
   // Modal State for Create / Edit Exam
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -236,6 +261,20 @@ export default function TeacherExamManagementPage() {
                           >
                             {isStarted ? "● LIVE (STARTED)" : exam.status}
                           </span>
+                          {(isPublished || isEnded) && (
+                            <span
+                              className={`mt-1.5 flex items-center gap-1 text-[9px] font-bold font-mono uppercase tracking-wide ${
+                                examVerifications[exam.id]?.passed
+                                  ? "text-emerald-600"
+                                  : "text-amber-600"
+                              }`}
+                            >
+                              <ShieldCheck className="w-3 h-3" />
+                              {examVerifications[exam.id]?.passed
+                                ? "Tested & verified"
+                                : "Test before opening"}
+                            </span>
+                          )}
                         </td>
 
                         {/* Lifecycle Controls: Publish, Start, End */}
@@ -255,9 +294,13 @@ export default function TeacherExamManagementPage() {
                             {/* Start (Go Live) action for published exams */}
                             {isPublished && (
                               <button
-                                onClick={() => setExamStatus(exam.id, "started")}
+                                onClick={() => startExam(exam)}
                                 className="px-3 py-1 bg-orange-500 hover:bg-orange-600 text-white font-bold text-[10px] rounded uppercase font-mono shadow-xs transition-colors flex items-center gap-1"
-                                title="Start exam and open code submissions"
+                                title={
+                                  examVerifications[exam.id]?.passed
+                                    ? "Start exam and open code submissions"
+                                    : "Verify the exam before opening it to all students"
+                                }
                               >
                                 <Play className="w-3 h-3 fill-white" />
                                 <span>Start Exam</span>
@@ -279,8 +322,13 @@ export default function TeacherExamManagementPage() {
                             {/* Restart/Re-open action for ended exams */}
                             {isEnded && (
                               <button
-                                onClick={() => setExamStatus(exam.id, "started")}
+                                onClick={() => startExam(exam)}
                                 className="px-2.5 py-1 bg-slate-800 hover:bg-slate-900 text-white font-bold text-[10px] rounded uppercase font-mono shadow-xs transition-colors"
+                                title={
+                                  examVerifications[exam.id]?.passed
+                                    ? "Reopen this exam for students"
+                                    : "Verify the exam before reopening it"
+                                }
                               >
                                 Reopen
                               </button>
@@ -290,6 +338,14 @@ export default function TeacherExamManagementPage() {
 
                         {/* Questions Management & Settings */}
                         <td className="py-3 px-4 text-right space-x-1.5 font-mono">
+                          <button
+                            onClick={() => setVerificationExamId(exam.id)}
+                            className="p-1.5 text-slate-400 hover:text-orange-600 hover:bg-orange-50 rounded transition-colors"
+                            title="Test exam and verify grading before opening"
+                          >
+                            <FlaskConical className="w-3.5 h-3.5" />
+                          </button>
+
                           <Link
                             href={`/teacher/exams/${exam.id}/questions`}
                             className="inline-flex items-center gap-1 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-sans font-bold rounded shadow-xs transition-colors"
@@ -463,6 +519,13 @@ export default function TeacherExamManagementPage() {
             </div>
           </div>
         )}
+
+        <ExamVerificationModal
+          examId={verificationExamId ?? 0}
+          isOpen={verificationExamId !== null}
+          onClose={() => setVerificationExamId(null)}
+          onOpenExam={openExamFromVerification}
+        />
       </AppLayout>
     </ProtectedRoute>
   );
