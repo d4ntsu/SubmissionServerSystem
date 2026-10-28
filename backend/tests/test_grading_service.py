@@ -57,6 +57,53 @@ async def test_all_test_cases_pass():
 
 
 @pytest.mark.asyncio
+async def test_stdio_retries_empty_piston_result_without_exit_code():
+    with patch("app.services.grading_service.SessionLocal") as mock_session_cls, \
+         patch("app.services.grading_service.PistonClient") as mock_piston_cls:
+        mock_db = mock_session_cls.return_value
+        mock_piston = mock_piston_cls.return_value.__aenter__.return_value
+
+        question = Question(id=1, exam_id=1, question_type=QuestionType.stdio, max_score=10.0)
+        submission = Submission(
+            id=1,
+            student_id=1,
+            question_id=1,
+            language="java",
+            source_code="class Main {}",
+            status=SubmissionStatus.running,
+            max_score=10.0,
+        )
+        test_case = TestCase(
+            id=1,
+            question_id=1,
+            input_data="Racecar",
+            expected_output="racecaR\ntrue",
+            score_weight=1.0,
+        )
+        mock_db.get.side_effect = lambda model, pk: {
+            Submission: submission,
+            Question: question,
+        }.get(model)
+        mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [
+            test_case
+        ]
+        mock_piston.execute.side_effect = [
+            PistonExecutionResult(
+                language="java",
+                version="15.0.2",
+                run=PistonStageResult(),
+            ),
+            _make_execution_result("racecaR\ntrue\n"),
+        ]
+
+        await grade_submission(1)
+
+        assert mock_piston.execute.call_count == 2
+        assert submission.status == SubmissionStatus.completed
+        assert submission.score == 10.0
+
+
+@pytest.mark.asyncio
 async def test_partial_score():
     """When some test cases fail, the score is proportional."""
     with patch("app.services.grading_service.SessionLocal") as mock_session_cls, \

@@ -114,12 +114,56 @@ async def _grade_stdio(
             except PistonClientError:
                 raise
 
+            if (
+                result.run.code is None
+                and result.run.signal is None
+                and not result.run.stdout
+                and not result.run.stderr
+                and not result.run.output
+                and not (result.compile and result.compile.code not in (None, 0))
+            ):
+                logger.warning(
+                    "Piston returned an empty execution result for submission %d, "
+                    "test case %d; retrying once",
+                    submission.id,
+                    tc.id,
+                )
+                result = await piston.execute(
+                    language=submission.language,
+                    files=[
+                        {
+                            "name": "Main.py" if submission.language == "python" else "Main.java",
+                            "content": submission.source_code,
+                        }
+                    ],
+                    stdin=tc.input_data,
+                )
+
             compile_stderr = ""
             if result.compile and result.compile.code != 0:
                 compile_failed = True
                 compile_stderr = result.compile.stderr or result.compile.output or "Compilation error"
                 _create_test_result(
                     db, submission, tc, passed=False, compile_output=compile_stderr
+                )
+                continue
+
+            if result.run.code != 0:
+                runtime_error = result.run.stderr or result.run.output
+                if not runtime_error:
+                    runtime_error = (
+                        f"Program terminated by {result.run.signal}."
+                        if result.run.signal
+                        else "Execution did not return an exit code or output after retrying."
+                    )
+                _create_test_result(
+                    db,
+                    submission,
+                    tc,
+                    passed=False,
+                    stdout=result.run.stdout,
+                    stderr=runtime_error,
+                    exit_code=result.run.code,
                 )
                 continue
 
