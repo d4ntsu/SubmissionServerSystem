@@ -169,11 +169,27 @@ def test_arguments_preserve_types(data, count, expected):
 
 
 @pytest.mark.parametrize(
+    "data,expected",
+    [
+        ("new int[]{12, 35, 1, 10, 34, 1}", [[12, 35, 1, 10, 34, 1]]),
+        ("new int[] {}", [[]]),
+    ],
+)
+def test_java_int_array_arguments_are_supported(data, expected):
+    assert parse_arguments(data, 1, ("int[]",)) == expected
+
+
+@pytest.mark.parametrize(
     "data,count", [("[2]", 2), ("[1,2,3]", 2), ("[broken", 1), ("", 1)]
 )
 def test_wrong_argument_counts_or_json_are_rejected(data, count):
     with pytest.raises(ValueError):
         parse_arguments(data, count)
+
+
+def test_malformed_java_int_array_literal_is_rejected():
+    with pytest.raises(ValueError, match="integer literals"):
+        parse_arguments("new int[]{12, nope}", 1, ("int[]",))
 
 
 def test_expected_values_and_comparison_are_typed():

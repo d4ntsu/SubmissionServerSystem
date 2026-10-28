@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     piston_run_memory_limit_bytes: int = 268_435_456
     # Java source-file mode compiles the grader inside Piston's run stage.
     piston_java_method_run_timeout_ms: int = 15_000
+    piston_java_method_run_cpu_time_ms: int = 15_000
     piston_java_method_run_memory_limit_bytes: int = 536_870_912
 
     socket_server_host: str = "127.0.0.1"

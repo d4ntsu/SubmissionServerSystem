@@ -54,6 +54,7 @@ async def smoke_test(url: str, version: str | None) -> bool:
                 args=["Calculator"],
                 stdin=json.dumps(config, ensure_ascii=True),
                 run_timeout_ms=settings.piston_java_method_run_timeout_ms,
+                run_cpu_time_ms=settings.piston_java_method_run_cpu_time_ms,
                 run_memory_limit_bytes=settings.piston_java_method_run_memory_limit_bytes,
             )
             try:

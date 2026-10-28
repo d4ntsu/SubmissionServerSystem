@@ -130,17 +130,24 @@ async def test_execute_can_set_limits_for_source_mode_java_compilation():
             files=[{"name": "Main.java", "content": "class Main {}"}],
             args=["Sample"],
             run_timeout_ms=15000,
+            run_cpu_time_ms=15000,
             run_memory_limit_bytes=536870912,
         )
     payload = json.loads(requests[-1].content)
     assert payload["run_timeout"] == 15000
+    assert payload["run_cpu_time"] == 15000
     assert payload["run_memory_limit"] == 536870912
     assert payload["args"] == ["Sample"]
 
 
 @pytest.mark.parametrize(
     "override",
-    [{"run_timeout_ms": 0}, {"run_timeout_ms": True}, {"run_memory_limit_bytes": -1}],
+    [
+        {"run_timeout_ms": 0},
+        {"run_timeout_ms": True},
+        {"run_cpu_time_ms": 0},
+        {"run_memory_limit_bytes": -1},
+    ],
 )
 @pytest.mark.asyncio
 async def test_invalid_limit_overrides_are_rejected(override):

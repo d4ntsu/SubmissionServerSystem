@@ -472,6 +472,8 @@ Request body for `POST /exams`. Accepts `title` (1–200 chars), `description` (
 ### `ExamUpdate`
 Request body for `PUT /exams/{exam_id}`. All fields are optional; only provided fields are applied. Includes `status` for transitioning the exam lifecycle.
 
+When a teacher transitions an exam to `started`, the backend records the actual UTC start time. If `duration_minutes` is set, it recalculates `end_time` from that start time so time spent in draft/published state does not consume the exam duration.
+
 ### `ExamResponse`
 Response model for exam data. Includes all exam fields plus `teacher_id` and `created_at`.
 

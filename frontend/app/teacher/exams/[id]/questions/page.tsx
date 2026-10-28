@@ -725,6 +725,19 @@ export default function TeacherQuestionsManagementPage() {
                           className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded"
                         />
                       </div>
+                      <div className="col-span-2">
+                        <label className="block text-[10px] text-slate-500 font-bold mb-1">Parameter Types</label>
+                        <input
+                          type="text"
+                          value={qParamTypes}
+                          onChange={(e) => setQParamTypes(e.target.value)}
+                          placeholder="e.g. int[] or int, String"
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded"
+                        />
+                        <p className="mt-1 text-[10px] text-slate-500">
+                          Enter parameter types in order, comma-separated. Use int[] for one integer-array parameter.
+                        </p>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -907,7 +920,7 @@ export default function TeacherQuestionsManagementPage() {
                           setTcArgs(e.target.value);
                           setTcError("");
                         }}
-                        placeholder="Arguments passed to the method (e.g. 5, 10)"
+                        placeholder="For int[] numbers: new int[]{12, 35, 1} or [[12,35,1]]"
                         className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded font-mono text-xs"
                       />
                     </div>

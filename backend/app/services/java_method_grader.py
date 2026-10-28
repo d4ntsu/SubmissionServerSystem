@@ -159,7 +159,11 @@ def _reject_constant(value: str) -> None:
     raise ValueError(f"Invalid JSON number: {value}")
 
 
-def parse_arguments(input_data: str | None, expected_count: int) -> list[Any]:
+def parse_arguments(
+    input_data: str | None,
+    expected_count: int,
+    parameter_types: tuple[str, ...] | None = None,
+) -> list[Any]:
     """Prefer a JSON argument list; preserve Unicode, null, booleans and nested arrays."""
     text = (input_data or "").strip()
     if not text:
@@ -168,6 +172,19 @@ def parse_arguments(input_data: str | None, expected_count: int) -> list[Any]:
         values = json.loads(text, parse_constant=_reject_constant)
         if not isinstance(values, list):
             raise ValueError("Arguments must be a JSON array")
+    elif (
+        expected_count == 1
+        and parameter_types == ("int[]",)
+        and (match := re.fullmatch(r"new\s+int\s*\[\s*\]\s*\{(.*)\}", text, re.DOTALL))
+    ):
+        elements = match.group(1).strip()
+        if not elements:
+            values = [[]]
+        else:
+            raw_values = [value.strip() for value in elements.split(",")]
+            if any(not re.fullmatch(r"[+-]?\d+", value) for value in raw_values):
+                raise ValueError("int[] arguments must contain integer literals")
+            values = [[int(value) for value in raw_values]]
     elif expected_count == 1:
         # Legacy single arguments may contain spaces/commas. JSON is recommended.
         values = [input_data]
@@ -348,7 +365,9 @@ async def grade_java_method(
         prepared = [
             (
                 tc,
-                parse_arguments(tc.input_data, len(spec.parameter_types)),
+                parse_arguments(
+                    tc.input_data, len(spec.parameter_types), spec.parameter_types
+                ),
                 parse_expected_output(tc.expected_output, spec.return_type),
             )
             for tc in test_cases
@@ -383,6 +402,7 @@ async def grade_java_method(
                 args=[class_name],
                 stdin=json.dumps(config, ensure_ascii=True, allow_nan=False),
                 run_timeout_ms=settings.piston_java_method_run_timeout_ms,
+                run_cpu_time_ms=settings.piston_java_method_run_cpu_time_ms,
                 run_memory_limit_bytes=settings.piston_java_method_run_memory_limit_bytes,
             )
             if execution.compile and (

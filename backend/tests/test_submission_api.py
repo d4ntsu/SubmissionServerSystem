@@ -47,6 +47,52 @@ class TestSubmissionEndpoints:
         assert data["language"] == "java"
         assert data["question_id"] == question_id
 
+    def test_start_rebases_expired_exam_window(self, client, teacher_token, student_token):
+        teacher_headers = {"Authorization": f"Bearer {teacher_token}"}
+        student_headers = {"Authorization": f"Bearer {student_token}"}
+        exam = client.post(
+            "/exams",
+            json={
+                "title": "Expired Draft Window",
+                "start_time": "2020-01-01T00:00:00Z",
+                "end_time": "2020-01-01T01:00:00Z",
+                "duration_minutes": 60,
+            },
+            headers=teacher_headers,
+        )
+        assert exam.status_code == 201
+        exam_id = exam.json()["id"]
+        client.put(
+            f"/exams/{exam_id}",
+            json={"status": "published"},
+            headers=teacher_headers,
+        )
+
+        started = client.put(
+            f"/exams/{exam_id}",
+            json={"status": "started"},
+            headers=teacher_headers,
+        )
+        assert started.status_code == 200
+        assert started.json()["start_time"] > "2020-01-01T00:00:00"
+        assert started.json()["end_time"] > started.json()["start_time"]
+
+        question = client.post(
+            "/questions",
+            json={"exam_id": exam_id, "title": "Question"},
+            headers=teacher_headers,
+        )
+        submission = client.post(
+            "/submissions",
+            json={
+                "question_id": question.json()["id"],
+                "language": "java",
+                "source_code": "class Main {}",
+            },
+            headers=student_headers,
+        )
+        assert submission.status_code == 201
+
     def test_submit_to_nonexistent_question(self, client, student_token):
         resp = client.post("/submissions", json={
             "question_id": 99999,

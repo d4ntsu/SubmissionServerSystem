@@ -82,24 +82,51 @@ const JAVA_METHOD_TYPES = new Set([
   "Character",
 ]);
 const JAVA_IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+const JAVA_METHOD_TYPE = /^([A-Za-z_$][A-Za-z0-9_$.]*)(?:\s*\[\s*\])*$/;
+
+function isSupportedJavaMethodType(type: string, allowVoid = false): boolean {
+  const match = JAVA_METHOD_TYPE.exec(type.trim());
+  if (!match) return false;
+  const baseType = match[1].replace(/^java\.lang\./, "");
+  const isArray = /\[/.test(type);
+  if (baseType === "void") return allowVoid && !isArray;
+  return JAVA_METHOD_TYPES.has(baseType);
+}
 
 function methodArgumentCount(argumentsText: string): number | null {
   if (!argumentsText.trim()) return 0;
   let count = 1;
   let insideQuotes = false;
+  let quoteCharacter = "";
+  let escaped = false;
+  const delimiters: string[] = [];
   for (let index = 0; index < argumentsText.length; index += 1) {
     const character = argumentsText[index];
-    if (character === '"') {
-      if (insideQuotes && argumentsText[index + 1] === '"') {
-        index += 1;
-      } else {
-        insideQuotes = !insideQuotes;
+    if (insideQuotes) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === quoteCharacter) {
+        insideQuotes = false;
       }
-    } else if (character === "," && !insideQuotes) {
+      continue;
+    }
+
+    if (character === '"' || character === "'") {
+      insideQuotes = true;
+      quoteCharacter = character;
+    } else if (character === "(" || character === "[" || character === "{") {
+      delimiters.push(character);
+    } else if (character === ")" || character === "]" || character === "}") {
+      const expectedOpening =
+        character === ")" ? "(" : character === "]" ? "[" : "{";
+      if (delimiters.pop() !== expectedOpening) return null;
+    } else if (character === "," && delimiters.length === 0) {
       count += 1;
     }
   }
-  return insideQuotes ? null : count;
+  return insideQuotes || delimiters.length > 0 ? null : count;
 }
 
 function expectedAnswer(question: Question, testCase: TestCase): string {
@@ -129,8 +156,8 @@ function hasGradingContract(question: Question): boolean {
       ? question.parameter_types.split(",").map((type) => type.trim())
       : [];
     return (
-      JAVA_METHOD_TYPES.has(question.return_type) &&
-      parameterTypes.every((type) => JAVA_METHOD_TYPES.has(type))
+      isSupportedJavaMethodType(question.return_type, true) &&
+      parameterTypes.every((type) => isSupportedJavaMethodType(type))
     );
   }
   return false;

@@ -1,5 +1,5 @@
 import logging
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -133,7 +133,16 @@ def update_exam(
             else None
         )
     for key, value in update_data.items():
+        if key == "status":
+            continue
         setattr(exam, key, value)
+    if "status" in update_data:
+        exam.status = update_data["status"]
+        if previous_status != ExamStatus.started and exam.status == ExamStatus.started:
+            started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            exam.start_time = started_at
+            if exam.duration_minutes is not None and exam.duration_minutes > 0:
+                exam.end_time = started_at + timedelta(minutes=exam.duration_minutes)
     db.commit()
     db.refresh(exam)
 

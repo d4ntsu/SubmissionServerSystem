@@ -35,11 +35,12 @@ Vì JavaCompiler nằm trong **run stage**, hai cấu hình mới đặt giới 
 | Biến môi trường | Mặc định | Ý nghĩa |
 | --- | --- | --- |
 | `PISTON_JAVA_METHOD_RUN_TIMEOUT_MS` | `15000` | Tổng thời gian compile + chạy mỗi test, milliseconds |
+| `PISTON_JAVA_METHOD_RUN_CPU_TIME_MS` | `15000` | Thời gian CPU tối đa mỗi test, milliseconds |
 | `PISTON_JAVA_METHOD_RUN_MEMORY_LIMIT_BYTES` | `536870912` | Giới hạn bộ nhớ của run stage, 512 MiB |
 
-Đây là giới hạn chung của cả compiler và code sinh viên, không phải hai quota riêng. Các bài `stdio` tiếp tục dùng cấu hình Piston cũ. HTTP timeout cần lớn hơn giới hạn chạy; mặc định `PISTON_REQUEST_TIMEOUT_SECONDS=20` phù hợp với 15 giây.
+Đây là giới hạn chung của cả compiler và code sinh viên, không phải hai quota riêng. Các bài `stdio` tiếp tục dùng cấu hình Piston cũ. HTTP timeout cần lớn hơn giới hạn chạy; mặc định `PISTON_REQUEST_TIMEOUT_SECONDS=20` phù hợp với 15 giây. Trong Compose, cả `PISTON_RUN_TIMEOUT` và `PISTON_RUN_CPU_TIME` phải ít nhất là `15000`.
 
-Piston cũng phải cho phép mức run memory này. Nếu dùng `deploy/piston/docker-compose.yml`, cấu hình `PISTON_RUN_MEMORY_LIMIT` là `536870912`; sau khi đổi cấu hình, tạo lại container bằng `docker compose -f deploy/piston/docker-compose.yml up -d --force-recreate`. Nếu Piston đang chạy ở nơi khác, tăng giới hạn run memory của Piston lên ít nhất `536870912` byte. Nếu không, API sẽ từ chối yêu cầu bằng HTTP 400 khi grader yêu cầu 512 MiB.
+Java 15 source-file launcher khởi động JVM trước, sau đó grader gọi `JavaCompiler` lần nữa để biên dịch runner và class của sinh viên. Piston mặc định giới hạn CPU của run stage ở 3 giây; do đó nó kill compiler bằng `SIGKILL` dù giới hạn wall-clock lớn hơn. Cấu hình trong Compose tăng cả giới hạn CPU và wall-clock lên 15 giây. Sau khi đổi cấu hình, tạo lại container bằng `docker compose -f deploy/piston/docker-compose.yml up -d --force-recreate`. Nếu Piston chạy ở nơi khác, cho phép ít nhất 15.000 ms cho cả CPU và wall-clock, cùng 536.870.912 byte cho run request.
 
 Mã thoát `65` từ bootstrap được lưu là lỗi compile; `70` với thông báo bootstrap là lỗi môi trường JDK. Code sinh viên thoát sớm hoặc thiếu output hợp lệ sẽ không được tính là pass.
 
@@ -66,7 +67,7 @@ Mã thoát `65` từ bootstrap được lưu là lỗi compile; `70` với thôn
 
 ## Dữ liệu test
 
-`input_data` nên là **JSON array của toàn bộ đối số**. `expected_output` là giá trị trả về mong đợi.
+`input_data` nên là **JSON array của toàn bộ đối số**. Với đúng một tham số `int[]`, cũng chấp nhận Java literal như `new int[]{12, 35, 1}`. `expected_output` là giá trị trả về mong đợi.
 
 | Signature | `input_data` | `expected_output` |
 | --- | --- | --- |
