@@ -1,4 +1,4 @@
-import { Exam, Question, TestCase, Submission, User, UserRole, Announcement, StudentClientStatus, RealtimeEventLog } from "@/types";
+import { Exam, Question, TestCase, Submission, User, UserRole, Announcement, StudentClientStatus, RealtimeEventLog, ExamStatus, CodingLanguage, QuestionType } from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -29,6 +29,42 @@ export function isValidDemoCredentials(
 ): boolean {
   const expected = DEMO_CREDENTIALS[role];
   return username === expected.username && password === expected.password;
+}
+
+export interface LoginResult {
+  access_token: string;
+  token_type?: string;
+}
+
+export async function loginRequest(
+  username: string,
+  password: string
+): Promise<LoginResult | null> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data?.access_token) return null;
+    return data;
+  } catch (err) {
+    return null;
+  }
+}
+
+export async function fetchCurrentUser(token: string): Promise<User | null> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (err) {
+    return null;
+  }
 }
 
 export const MOCK_EXAMS: Exam[] = [
@@ -611,26 +647,357 @@ export async function fetchExamById(examId: number, token?: string): Promise<Exa
   return MOCK_EXAMS.find((e) => e.id === examId);
 }
 
-export async function fetchQuestionsByExam(examId: number, token?: string): Promise<Question[]> {
+export async function fetchQuestionsByExam(
+  examId: number,
+  token?: string
+): Promise<BackendQuestion[]> {
   try {
     const res = await fetch(`${API_BASE_URL}/questions?exam_id=${examId}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) return data;
+      if (Array.isArray(data)) return data;
     }
   } catch (err) {}
-  return MOCK_QUESTIONS[examId] || [];
+  return (MOCK_QUESTIONS[examId] || []).map((q) => ({
+    id: q.id,
+    exam_id: q.exam_id,
+    title: q.title,
+    description: q.description,
+    question_type: q.question_type === "JAVA_CLASS_METHOD" ? "java_class" : "stdio",
+    max_score: q.points,
+    allowed_languages: q.language,
+    class_name: q.class_name ?? null,
+    method_signature: q.method_name ? `${q.method_name}(${q.parameter_types ?? ""})` : null,
+  }));
 }
 
-export async function fetchTestCasesByQuestion(questionId: number, token?: string): Promise<TestCase[]> {
+export async function fetchTestCasesByQuestion(
+  questionId: number,
+  token?: string
+): Promise<BackendTestCase[]> {
   try {
     const res = await fetch(`${API_BASE_URL}/test-cases/question/${questionId}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
-    if (res.ok) return await res.json();
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) return data;
+    }
   } catch (err) {}
-  return MOCK_TEST_CASES[questionId] || [];
+  return (MOCK_TEST_CASES[questionId] || []).map((tc) => ({
+    id: tc.id,
+    question_id: tc.question_id,
+    input_data: tc.stdin || "",
+    expected_output: tc.expected_stdout || "",
+    is_hidden: tc.is_sample ? 0 : 1,
+    score_weight: tc.weight,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Real backend CRUD + submission helpers (fall back to mocks when offline)
+// ---------------------------------------------------------------------------
+
+function authHeaders(token?: string): HeadersInit {
+  return token
+    ? { "Content-Type": "application/json", Authorization: `Bearer ${token}` }
+    : { "Content-Type": "application/json" };
+}
+
+export interface CreateExamPayload {
+  title: string;
+  description?: string;
+  start_time?: string;
+  end_time?: string;
+  duration_minutes?: number;
+  access_password?: string;
+}
+
+export async function createExamRequest(
+  payload: CreateExamPayload,
+  token?: string
+): Promise<Exam | null> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/exams`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (err) {
+    return null;
+  }
+}
+
+export interface UpdateExamPayload {
+  title?: string;
+  description?: string;
+  start_time?: string;
+  end_time?: string;
+  duration_minutes?: number;
+  status?: ExamStatus;
+  access_password?: string | null;
+}
+
+export async function updateExamRequest(
+  examId: number,
+  payload: UpdateExamPayload,
+  token?: string
+): Promise<Exam | null> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/exams/${examId}`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (err) {
+    return null;
+  }
+}
+
+export async function deleteExamRequest(examId: number, token?: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/exams/${examId}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    return res.ok;
+  } catch (err) {
+    return false;
+  }
+}
+
+export interface CreateQuestionPayload {
+  exam_id: number;
+  title: string;
+  description?: string;
+  question_type?: "stdio" | "java_class";
+  max_score?: number;
+  allowed_languages?: string;
+  class_name?: string | null;
+  method_signature?: string | null;
+}
+
+export function toBackendQuestionType(qt: QuestionType): "stdio" | "java_class" {
+  return qt === "JAVA_CLASS_METHOD" ? "java_class" : "stdio";
+}
+
+export function toFrontendQuestionType(qt: string): QuestionType {
+  return qt === "java_class" ? "JAVA_CLASS_METHOD" : "STDIN_STDOUT";
+}
+
+export function toBackendLanguage(lang: CodingLanguage): string {
+  return lang;
+}
+
+export type BackendQuestion = {
+  id: number;
+  exam_id: number;
+  title: string;
+  description: string;
+  question_type: "stdio" | "java_class";
+  max_score: number;
+  allowed_languages: string;
+  class_name: string | null;
+  method_signature: string | null;
+  created_at?: string | null;
+};
+
+/** Map a backend QuestionResponse to the frontend Question shape. */
+export function toFrontendQuestion(q: BackendQuestion): Question {
+  const methodSignature = q.method_signature || "";
+  const [methodName = "", parameterTypes = ""] = methodSignature.split("(");
+  return {
+    id: q.id,
+    exam_id: q.exam_id,
+    title: q.title,
+    description: q.description,
+    points: q.max_score,
+    question_type: toFrontendQuestionType(q.question_type),
+    time_limit: 2,
+    language: "java",
+    class_name: q.class_name,
+    method_name: methodName.trim() || null,
+    method_mode: "STATIC",
+    return_type: "int",
+    parameter_types: parameterTypes.replace(")", "").trim() || null,
+    show_result_to_student: true,
+  };
+}
+
+export async function createQuestionRequest(
+  payload: CreateQuestionPayload,
+  token?: string
+): Promise<Question | null> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/questions`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return toFrontendQuestion(data);
+  } catch (err) {
+    return null;
+  }
+}
+
+export async function deleteQuestionRequest(questionId: number, token?: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/questions/${questionId}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    return res.ok;
+  } catch (err) {
+    return false;
+  }
+}
+
+export interface CreateTestCasePayload {
+  question_id: number;
+  input_data?: string;
+  expected_output?: string;
+  is_hidden?: number;
+  score_weight?: number;
+}
+
+export type BackendTestCase = {
+  id: number;
+  question_id: number;
+  input_data: string;
+  expected_output: string;
+  is_hidden: number;
+  score_weight: number;
+  created_at?: string | null;
+};
+
+export function toFrontendTestCase(tc: BackendTestCase): TestCase {
+  return {
+    id: tc.id,
+    question_id: tc.question_id,
+    is_sample: !tc.is_hidden,
+    weight: tc.score_weight,
+    stdin: tc.input_data,
+    expected_stdout: tc.expected_output,
+    arguments: null,
+    expected_return: null,
+  };
+}
+
+export async function createTestCaseRequest(
+  payload: CreateTestCasePayload,
+  token?: string
+): Promise<TestCase | null> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/test-cases`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return toFrontendTestCase(data);
+  } catch (err) {
+    return null;
+  }
+}
+
+export async function deleteTestCaseRequest(testCaseId: number, token?: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/test-cases/${testCaseId}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    return res.ok;
+  } catch (err) {
+    return false;
+  }
+}
+
+/** POST /submissions — create a submission for real backend grading. */
+export async function submitCodeRequest(
+  questionId: number,
+  language: string,
+  sourceCode: string,
+  token?: string
+): Promise<number | null> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/submissions`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        question_id: questionId,
+        language,
+        source_code: sourceCode,
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.id ?? null;
+  } catch (err) {
+    return null;
+  }
+}
+
+export interface BackendSubmissionResult {
+  submission: {
+    id: number;
+    status: string;
+    score: number | null;
+    max_score: number;
+    error_summary: string | null;
+  };
+  test_results: Array<{
+    id: number;
+    test_case_id: number;
+    is_sample?: boolean;
+    passed: number;
+    stdout?: string | null;
+    stderr?: string | null;
+    compile_output?: string | null;
+    exit_code?: number | null;
+    time?: number | null;
+    memory?: number | null;
+    input_data?: string | null;
+    expected_output?: string | null;
+    score_weight?: number | null;
+    awarded_points?: number | null;
+    message?: string | null;
+  }>;
+}
+
+export async function fetchSubmissionResult(
+  submissionId: number,
+  token?: string
+): Promise<BackendSubmissionResult | null> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/results/${submissionId}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (err) {
+    return null;
+  }
+}
+
+/** POST /submissions/{id}/regrade — requeue a submission for real backend grading. */
+export async function regradeRequest(submissionId: number, token?: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/submissions/${submissionId}/regrade`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    return res.ok;
+  } catch (err) {
+    return false;
+  }
 }
 

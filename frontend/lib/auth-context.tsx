@@ -2,13 +2,13 @@
 
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { User, UserRole } from "@/types";
-import { MOCK_USER_STUDENT, MOCK_USER_TEACHER, isValidDemoCredentials } from "./api";
+import { loginRequest, fetchCurrentUser } from "./api";
 
 interface AuthContextType {
   user: User | null;
   role: UserRole;
   token: string | null;
-  login: (username: string, password: string, role?: UserRole) => User | null;
+  login: (username: string, password: string, role?: UserRole) => Promise<User | null>;
   logout: () => void;
   isTeacher: boolean;
   isStudent: boolean;
@@ -36,53 +36,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Check local storage for persistent session
     const savedUser = localStorage.getItem("lan_exam_user");
-    if (savedUser) {
-      try {
-        const parsed = JSON.parse(savedUser);
-        if (parsed?.role === "teacher" || parsed?.role === "student") {
-          setUser(parsed);
-          setToken("auth_token_" + parsed.role);
-          setAuthCookie(parsed.role);
-        } else {
+      const savedToken = localStorage.getItem("lan_exam_token");
+      if (savedUser) {
+        try {
+          const parsed = JSON.parse(savedUser);
+          if (parsed?.role === "teacher" || parsed?.role === "student") {
+            setUser(parsed);
+            setToken(savedToken || "auth_token_" + parsed.role);
+            setAuthCookie(parsed.role);
+          } else {
+            localStorage.removeItem("lan_exam_user");
+            localStorage.removeItem("lan_exam_token");
+            clearAuthCookie();
+          }
+        } catch (e) {
           localStorage.removeItem("lan_exam_user");
+          localStorage.removeItem("lan_exam_token");
           clearAuthCookie();
         }
-      } catch (e) {
-        localStorage.removeItem("lan_exam_user");
+      } else {
         clearAuthCookie();
       }
-    } else {
-      clearAuthCookie();
-    }
-    setIsLoading(false);
-  }, []);
+      setIsLoading(false);
+    }, []);
 
-  const login = (
+  const login = async (
     username: string,
     password: string,
     role: UserRole = "student"
-  ): User | null => {
-    if (!isValidDemoCredentials(username, password, role)) {
-      return null;
-    }
+    ): Promise<User | null> => {
+      // Real backend authentication (JWT)
+      const result = await loginRequest(username, password);
+      if (!result) return null;
 
-    const newUser: User =
-      role === "teacher"
-        ? { ...MOCK_USER_TEACHER, username }
-        : { ...MOCK_USER_STUDENT, username };
-    setUser(newUser);
-    setToken("auth_token_" + role);
-    localStorage.setItem("lan_exam_user", JSON.stringify(newUser));
-    setAuthCookie(role);
-    return newUser;
-  };
+      const profile = await fetchCurrentUser(result.access_token);
+      if (!profile) return null;
+
+      // The role is authoritative from the backend profile
+      setUser(profile);
+      setToken(result.access_token);
+      localStorage.setItem("lan_exam_user", JSON.stringify(profile));
+      localStorage.setItem("lan_exam_token", result.access_token);
+      setAuthCookie(profile.role);
+      return profile;
+    };
 
   const logout = () => {
     setUser(null);
     setToken(null);
     localStorage.removeItem("lan_exam_user");
-    clearAuthCookie();
-  };
+      localStorage.removeItem("lan_exam_token");
+      clearAuthCookie();
+    };
 
   const role: UserRole = user?.role || "student";
   const isTeacher = user?.role === "teacher";

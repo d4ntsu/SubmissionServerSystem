@@ -4,7 +4,6 @@ import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useSocket } from "@/lib/socket-context";
-import { isValidDemoCredentials } from "@/lib/api";
 import { UserRole } from "@/types";
 import {
   GraduationCap,
@@ -47,33 +46,30 @@ export default function LoginPage() {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
+  const handleSubmit = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setError(null);
+      setIsLoading(true);
 
-    if (!isValidDemoCredentials(username, password, selectedRole)) {
-      setError("Login failed. The username and password do not match the selected account.");
-      addLog("WARN", "Login", `Failed sign-in attempt for "${username}" as ${selectedRole}.`);
-      return;
-    }
-
-    setIsLoading(true);
-
-    setTimeout(() => {
-      const loggedInUser = login(username, password, selectedRole);
-      if (!loggedInUser) {
-        setError("Login failed. The username and password do not match the selected account.");
+      try {
+        const loggedInUser = await login(username, password, selectedRole);
+        if (!loggedInUser) {
+          setError("Login failed. The username and password do not match the selected account.");
+          addLog("WARN", "Login", `Failed sign-in attempt for "${username}" as ${selectedRole}.`);
+          setIsLoading(false);
+          return;
+        }
+        addLog(
+          "EVENT",
+          loggedInUser.full_name,
+          `Logged in to the exam portal as ${selectedRole === "teacher" ? "teacher" : "student"}`
+        );
         setIsLoading(false);
-        return;
+      } catch (err) {
+        setError("Login failed. Please try again.");
+        setIsLoading(false);
       }
-      addLog(
-        "EVENT",
-        loggedInUser.full_name,
-        `Logged in to the exam portal as ${selectedRole === "teacher" ? "teacher" : "student"}`
-      );
-      setIsLoading(false);
-    }, 500);
-  };
+    };
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col justify-center items-center p-4">

@@ -19,8 +19,27 @@ import {
   MOCK_EXAMS,
   MOCK_QUESTIONS,
   MOCK_TEST_CASES,
-} from "./api";
+  createExamRequest,
+  createQuestionRequest,
+  createTestCaseRequest,
+  deleteExamRequest,
+  deleteQuestionRequest,
+  deleteTestCaseRequest,
+  fetchExams,
+  fetchQuestionsByExam,
+  fetchTestCasesByQuestion,
+  submitCodeRequest,
+  fetchSubmissionResult,
+    regradeRequest,
+    toFrontendQuestion,
+  toFrontendTestCase,
+    toBackendQuestionType,
+    toBackendLanguage,
+    updateExamRequest,
+    BackendSubmissionResult,
+  } from "./api";
 import { gradeSubmissionLocally } from "./grading";
+import { useAuth } from "./auth-context";
 import {
   buildExamVerification,
   ExamVerification,
@@ -51,26 +70,26 @@ interface SocketContextType {
   addLog: (level: "INFO" | "WARN" | "EVENT" | "SUBMISSION" | "SYSTEM", source: string, message: string, details?: any) => void;
   submissions: Submission[];
   submitCode: (sub: { student_id: number; student_name: string; question_id: number; question_title: string; exam_id: number; exam_title: string; language: string; source_code: string }) => Promise<Submission>;
-  regradeSubmission: (id: number) => void;
+  regradeSubmission: (id: number) => Promise<void>;
   examVerifications: Record<number, ExamVerificationSummary>;
   runExamVerification: (id: number) => ExamVerification;
   clearExamVerification: (id: number) => void;
 
   // Exam & Questions Management
   exams: Exam[];
-  createExam: (data: Partial<Exam> & { access_password?: string }) => Exam;
-  updateExam: (id: number, data: Partial<Exam> & { access_password?: string | null }) => void;
-  setExamStatus: (id: number, status: ExamStatus) => void;
+    createExam: (data: Partial<Exam> & { access_password?: string }) => Promise<Exam>;
+    updateExam: (id: number, data: Partial<Exam> & { access_password?: string | null }) => Promise<void>;
+    setExamStatus: (id: number, status: ExamStatus) => Promise<void>;
   deleteExam: (id: number) => void;
   hasExamPassword: (id: number) => boolean;
   verifyExamPassword: (id: number, password: string) => boolean;
   setExamPassword: (id: number, password: string | null) => void;
   questions: Record<number, Question[]>;
-  createQuestion: (examId: number, data: Partial<Question>) => Question;
+    createQuestion: (examId: number, data: Partial<Question>) => Promise<Question>;
   updateQuestion: (examId: number, questionId: number, data: Partial<Question>) => void;
   deleteQuestion: (examId: number, questionId: number) => void;
   testCases: Record<number, TestCase[]>;
-  createTestCase: (questionId: number, data: Partial<TestCase>) => TestCase;
+    createTestCase: (questionId: number, data: Partial<TestCase>) => Promise<TestCase>;
   deleteTestCase: (questionId: number, testCaseId: number) => void;
 }
 
@@ -86,6 +105,7 @@ const STORAGE_KEYS = {
 };
 
 export function SocketProvider({ children }: { children: React.ReactNode }) {
+  const { token } = useAuth();
   const [isConnected, setIsConnected] = useState(true);
   const [announcements, setAnnouncements] = useState<Announcement[]>(MOCK_ANNOUNCEMENTS);
   const [activeAnnouncement, setActiveAnnouncement] = useState<Announcement | null>(null);
@@ -178,6 +198,48 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     }
     setStorageReady(true);
   }, []);
+
+      // Fetch real exams/questions/test-cases from the backend API when logged in.
+      // LocalStorage (demo) state is treated as the offline fallback.
+      useEffect(() => {
+        if (!token) return;
+        let cancelled = false;
+
+        (async () => {
+          try {
+            const realExams = await fetchExams(token);
+            if (!cancelled && realExams.length > 0) {
+              setExams(realExams);
+              setQuestions({});
+              setTestCases({});
+
+              // Load questions + test cases for each real exam.
+              const qByExam: Record<number, Question[]> = {};
+              const tcByQ: Record<number, TestCase[]> = {};
+              for (const exam of realExams) {
+                const qs = await fetchQuestionsByExam(exam.id, token);
+                if (!Array.isArray(qs) || qs.length === 0) continue;
+                qByExam[exam.id] = qs.map(toFrontendQuestion);
+                for (const q of qs) {
+                  const tcs = await fetchTestCasesByQuestion(q.id, token);
+                  if (!Array.isArray(tcs) || tcs.length === 0) continue;
+                  tcByQ[q.id] = tcs.map(toFrontendTestCase);
+                }
+              }
+              if (!cancelled) {
+                setQuestions((prev) => ({ ...prev, ...qByExam }));
+                setTestCases((prev) => ({ ...prev, ...tcByQ }));
+              }
+            }
+          } catch {
+            // Backend unavailable — keep the demo/localStorage fallback.
+          }
+        })();
+
+        return () => {
+          cancelled = true;
+        };
+      }, [token]);
 
   useEffect(() => {
     if (!storageReady || typeof window === "undefined") return;
@@ -395,9 +457,9 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   };
 
   // Exam Management actions
-  const createExam = (data: Partial<Exam> & { access_password?: string }): Exam => {
-    const newId = exams.length > 0 ? Math.max(...exams.map((e) => e.id)) + 1 : 1;
-    const { access_password, ...examData } = data;
+    const createExam = async (data: Partial<Exam> & { access_password?: string }): Promise<Exam> => {
+      const { access_password, ...examData } = data;
+      const newId = exams.length > 0 ? Math.max(...exams.map((e) => e.id)) + 1 : 1;
     const newExam: Exam = {
       id: newId,
       title: examData.title || `New Examination #${newId}`,
@@ -411,40 +473,86 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       total_points: 0,
       has_password: Boolean(access_password?.trim()),
     };
-    setExams((prev) => [newExam, ...prev]);
-    setQuestions((prev) => ({ ...prev, [newId]: [] }));
-    if (access_password?.trim()) {
-      setExamPassword(newId, access_password);
-    }
 
-    addLog("EVENT", "Exam Manager", `Created new examination #${newId}: "${newExam.title}" (Status: ${newExam.status.toUpperCase()})`);
-    return newExam;
-  };
+      // Real backend persistence when online.
+      if (token) {
+        const created = await createExamRequest(
+          {
+            title: newExam.title,
+            description: newExam.description,
+            start_time: newExam.start_time,
+            end_time: newExam.end_time,
+            duration_minutes: newExam.duration_minutes,
+            access_password: access_password?.trim() || undefined,
+          },
+          token
+        );
+        if (created) {
+          setExams((prev) => [created, ...prev]);
+          setQuestions((prev) => ({ ...prev, [created.id]: [] }));
+          if (access_password?.trim()) setExamPassword(created.id, access_password);
+          addLog("EVENT", "Exam Manager", `Created new examination #${created.id}: "${created.title}" (Status: ${created.status.toUpperCase()})`);
+          return created;
+        }
+      }
 
-  const updateExam = (id: number, data: Partial<Exam> & { access_password?: string | null }) => {
-    clearExamVerification(id);
-    const { access_password, ...examData } = data;
-    setExams((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, ...examData } : e))
-    );
-    if (access_password !== undefined) {
-      setExamPassword(id, access_password);
+      setExams((prev) => [newExam, ...prev]);
+      setQuestions((prev) => ({ ...prev, [newId]: [] }));
+      if (access_password?.trim()) {
+        setExamPassword(newId, access_password);
+      }
+
+      addLog("EVENT", "Exam Manager", `Created new examination #${newId}: "${newExam.title}" (Status: ${newExam.status.toUpperCase()})`);
+      return newExam;
+    };
+
+  const updateExam = async (
+      id: number,
+      data: Partial<Exam> & { access_password?: string | null }
+    ): Promise<void> => {
+      clearExamVerification(id);
+      const { access_password, ...examData } = data;
       setExams((prev) =>
-        prev.map((e) =>
-          e.id === id ? { ...e, has_password: Boolean(access_password?.trim()) } : e
-        )
+        prev.map((e) => (e.id === id ? { ...e, ...examData } : e))
       );
-    }
-    addLog("EVENT", "Exam Manager", `Updated examination #${id} details`);
-  };
+      if (access_password !== undefined) {
+        setExamPassword(id, access_password);
+        setExams((prev) =>
+          prev.map((e) =>
+            e.id === id ? { ...e, has_password: Boolean(access_password?.trim()) } : e
+          )
+        );
+      }
+      if (token) {
+        const updated = await updateExamRequest(
+          id,
+          {
+            title: examData.title,
+            description: examData.description,
+            duration_minutes: examData.duration_minutes,
+            status: examData.status,
+            access_password: access_password === undefined ? undefined : access_password || null,
+          },
+          token
+        );
+        if (updated) {
+          setExams((prev) => prev.map((e) => (e.id === id ? updated : e)));
+        }
+      }
+      addLog("EVENT", "Exam Manager", `Updated examination #${id} details`);
+    };
 
-  const setExamStatus = (id: number, newStatus: ExamStatus) => {
+  const setExamStatus = async (id: number, newStatus: ExamStatus) => {
     setExams((prev) =>
       prev.map((e) => (e.id === id ? { ...e, status: newStatus } : e))
     );
 
-    const targetExam = exams.find((e) => e.id === id);
-    const examTitle = targetExam?.title || `Exam #${id}`;
+      if (token) {
+        await updateExamRequest(id, { status: newStatus }, token);
+      }
+
+      const targetExam = exams.find((e) => e.id === id);
+      const examTitle = targetExam?.title || `Exam #${id}`;
 
     if (newStatus === "started") {
       addNotification({
@@ -470,16 +578,19 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   const deleteExam = (id: number) => {
     clearExamVerification(id);
     setExams((prev) => prev.filter((e) => e.id !== id));
-    if (examPasswords[id]) {
-      const next = { ...examPasswords };
-      delete next[id];
-      persistPasswords(next);
-    }
-    addLog("WARN", "Exam Manager", `Deleted examination #${id}`);
-  };
+      if (token) {
+        deleteExamRequest(id, token);
+      }
+      if (examPasswords[id]) {
+        const next = { ...examPasswords };
+        delete next[id];
+        persistPasswords(next);
+      }
+      addLog("WARN", "Exam Manager", `Deleted examination #${id}`);
+    };
 
   // Question Management actions
-  const createQuestion = (examId: number, data: Partial<Question>): Question => {
+    const createQuestion = async (examId: number, data: Partial<Question>): Promise<Question> => {
     clearExamVerification(examId);
     const existing = questions[examId] || [];
     const newId = 100 + Math.floor(Math.random() * 899);
@@ -500,26 +611,62 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       show_result_to_student: data.show_result_to_student ?? true,
     };
 
-    setQuestions((prev) => ({
-      ...prev,
-      [examId]: [...(prev[examId] || []), newQ],
-    }));
-
-    // Update points and count on exam
-    setExams((prev) =>
-      prev.map((e) => {
-        if (e.id === examId) {
-          const count = (e.questions_count || 0) + 1;
-          const points = (e.total_points || 0) + newQ.points;
-          return { ...e, questions_count: count, total_points: points };
+      if (token) {
+        const created = await createQuestionRequest(
+          {
+            exam_id: examId,
+            title: newQ.title,
+            description: newQ.description,
+            question_type: toBackendQuestionType(newQ.question_type),
+            max_score: newQ.points,
+            allowed_languages: toBackendLanguage(newQ.language),
+            class_name: newQ.class_name,
+            method_signature: newQ.method_name
+              ? `${newQ.method_name}(${newQ.parameter_types || "int, int"}): ${newQ.return_type || "int"}`
+              : null,
+          },
+          token
+        );
+        if (created) {
+          setQuestions((prev) => ({
+            ...prev,
+            [examId]: [...(prev[examId] || []), created],
+          }));
+          setExams((prev) =>
+            prev.map((e) => {
+              if (e.id === examId) {
+                const count = (e.questions_count || 0) + 1;
+                const points = (e.total_points || 0) + created.points;
+                return { ...e, questions_count: count, total_points: points };
+              }
+              return e;
+            })
+          );
+          addLog("EVENT", "Question Manager", `Added Question #${created.id} ("${created.title}") to Exam #${examId}`);
+          return created;
         }
-        return e;
-      })
-    );
+      }
 
-    addLog("EVENT", "Question Manager", `Added Question #${newId} ("${newQ.title}") to Exam #${examId}`);
-    return newQ;
-  };
+      setQuestions((prev) => ({
+        ...prev,
+        [examId]: [...(prev[examId] || []), newQ],
+      }));
+
+      // Update points and count on exam
+      setExams((prev) =>
+        prev.map((e) => {
+          if (e.id === examId) {
+            const count = (e.questions_count || 0) + 1;
+            const points = (e.total_points || 0) + newQ.points;
+            return { ...e, questions_count: count, total_points: points };
+          }
+          return e;
+        })
+      );
+
+      addLog("EVENT", "Question Manager", `Added Question #${newId} ("${newQ.title}") to Exam #${examId}`);
+      return newQ;
+    };
 
   const updateQuestion = (examId: number, questionId: number, data: Partial<Question>) => {
     clearExamVerification(examId);
@@ -536,34 +683,58 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       ...prev,
       [examId]: (prev[examId] || []).filter((q) => q.id !== questionId),
     }));
-    addLog("WARN", "Question Manager", `Deleted Question #${questionId} from Exam #${examId}`);
-  };
-
-  // Test Case Management actions
-  const createTestCase = (questionId: number, data: Partial<TestCase>): TestCase => {
-    const ownerExamId = examIdForQuestion(questionId);
-    if (ownerExamId !== null) clearExamVerification(ownerExamId);
-    const existing = testCases[questionId] || [];
-    const newId = 1000 + Math.floor(Math.random() * 8999);
-    const newTc: TestCase = {
-      id: newId,
-      question_id: questionId,
-      is_sample: data.is_sample ?? true,
-      weight: data.weight || 10,
-      stdin: data.stdin || "",
-      expected_stdout: data.expected_stdout || "",
-      arguments: data.arguments || "",
-      expected_return: data.expected_return || "",
+      if (token) {
+        deleteQuestionRequest(questionId, token);
+      }
+      addLog("WARN", "Question Manager", `Deleted Question #${questionId} from Exam #${examId}`);
     };
 
-    setTestCases((prev) => ({
-      ...prev,
-      [questionId]: [...(prev[questionId] || []), newTc],
-    }));
+    // Test Case Management actions
+    const createTestCase = async (questionId: number, data: Partial<TestCase>): Promise<TestCase> => {
+      const ownerExamId = examIdForQuestion(questionId);
+      if (ownerExamId !== null) clearExamVerification(ownerExamId);
+      const existing = testCases[questionId] || [];
+      const newId = 1000 + Math.floor(Math.random() * 8999);
+      const newTc: TestCase = {
+        id: newId,
+        question_id: questionId,
+        is_sample: data.is_sample ?? true,
+        weight: data.weight || 10,
+        stdin: data.stdin || "",
+        expected_stdout: data.expected_stdout || "",
+        arguments: data.arguments || "",
+        expected_return: data.expected_return || "",
+      };
 
-    addLog("EVENT", "TestCase Manager", `Added test case #${newId} to Question #${questionId} (Sample: ${newTc.is_sample})`);
-    return newTc;
-  };
+      if (token) {
+        const created = await createTestCaseRequest(
+          {
+            question_id: questionId,
+            input_data: newTc.stdin || "",
+            expected_output: newTc.expected_stdout || "",
+            is_hidden: newTc.is_sample ? 0 : 1,
+            score_weight: newTc.weight,
+          },
+          token
+        );
+        if (created) {
+          setTestCases((prev) => ({
+            ...prev,
+            [questionId]: [...(prev[questionId] || []), created],
+          }));
+          addLog("EVENT", "TestCase Manager", `Added test case #${created.id} to Question #${questionId} (Sample: ${created.is_sample})`);
+          return created;
+        }
+      }
+
+      setTestCases((prev) => ({
+        ...prev,
+        [questionId]: [...(prev[questionId] || []), newTc],
+      }));
+
+      addLog("EVENT", "TestCase Manager", `Added test case #${newId} to Question #${questionId} (Sample: ${newTc.is_sample})`);
+      return newTc;
+    };
 
   const deleteTestCase = (questionId: number, testCaseId: number) => {
     const ownerExamId = examIdForQuestion(questionId);
@@ -572,7 +743,10 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       ...prev,
       [questionId]: (prev[questionId] || []).filter((tc) => tc.id !== testCaseId),
     }));
-    addLog("WARN", "TestCase Manager", `Removed test case #${testCaseId} from Question #${questionId}`);
+      if (token) {
+        deleteTestCaseRequest(testCaseId, token);
+      }
+      addLog("WARN", "TestCase Manager", `Removed test case #${testCaseId} from Question #${questionId}`);
   };
 
   const submitCode = async (data: {
@@ -645,62 +819,144 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       return initialSub;
     }
 
-    setTimeout(() => {
-      setSubmissions((prev) =>
-        prev.map((s) => (s.id === newSubId ? { ...s, status: "running" } : s))
-      );
-      addLog("INFO", "Grading Worker", `Submission #${newSubId} is being evaluated...`);
-    }, 900);
+      // Mark as running immediately (for real grading: submission transitioned by the worker).
+      setTimeout(() => {
+        setSubmissions((prev) =>
+          prev.map((s) => (s.id === newSubId ? { ...s, status: "running" } : s))
+        );
+        addLog("INFO", "Grading Worker", `Submission #${newSubId} is being evaluated...`);
+      }, 900);
 
-    setTimeout(() => {
-      const outcome = gradeSubmissionLocally(
-        newSubId,
-        question,
-        questionTestCases,
-        data.source_code
-      );
+      // Attempt real backend grading; fall back to local heuristic grading when offline.
+      if (token) {
+        // Reset the running placeholder so the outcome below can use the same id.
+        const realSubId = await submitCodeRequest(
+          data.question_id,
+          question.language,
+          data.source_code,
+          token
+        );
 
-      setSubmissions((prev) =>
-        prev.map((s) =>
-          s.id === newSubId
-            ? {
-                ...s,
-                status: outcome.status,
-                score: outcome.score,
-                error_summary: outcome.error_summary,
-                graded_at: new Date().toISOString(),
-                test_results: outcome.test_results,
-              }
-            : s
-        )
-      );
+        if (realSubId !== null) {
+          let result: BackendSubmissionResult | null = null;
+          let deadline = Date.now() + 30000; // up to 30s for Piston grading
+          while (Date.now() < deadline) {
+            result = await fetchSubmissionResult(realSubId, token);
+            const status = result?.submission?.status;
+            if (status === "completed" || status === "error") break;
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+          }
 
-      const passedCount = outcome.test_results.filter((result) => result.passed === 1).length;
-      const totalCount = outcome.test_results.length;
+          if (result) {
+            const backendSub: Submission = {
+              id: realSubId,
+              student_id: data.student_id,
+              student_name: data.student_name,
+              student_username: "current_user",
+              question_id: data.question_id,
+              question_title: data.question_title,
+              exam_id: data.exam_id,
+              exam_title: data.exam_title,
+              language: question.language,
+              source_code: data.source_code,
+              status: result.submission.status as Submission["status"],
+              score: result.submission.score,
+              max_score: result.submission.max_score,
+              error_summary: result.submission.error_summary,
+              submitted_at: new Date().toISOString(),
+              graded_at: new Date().toISOString(),
+              test_results: (result.test_results || []).map((tr) => ({
+                id: tr.id,
+                submission_id: realSubId,
+                test_case_id: tr.test_case_id,
+                is_sample: tr.is_sample,
+                passed: tr.passed,
+                stdout: tr.stdout || "",
+                stderr: tr.stderr || "",
+                compile_output: tr.compile_output || "",
+                exit_code: tr.exit_code,
+                time: tr.time,
+                memory: tr.memory,
+                input_data: tr.input_data || "",
+                expected_output: tr.expected_output || "",
+                awarded_points: tr.awarded_points,
+                score_weight: tr.score_weight,
+                message: tr.message,
+              })),
+            };
+            setSubmissions((prev) => prev.map((s) => (s.id === newSubId ? backendSub : s)));
 
-      addNotification({
-        title: outcome.status === "error" ? "Grading Failed" : "Grading Completed",
-        message:
+            const failed = backendSub.status === "error";
+            addNotification({
+              title: failed ? "Grading Failed" : "Grading Completed",
+              message: failed
+                ? `Submission #${realSubId}: ${backendSub.error_summary || "grading error"}`
+                : `Submission #${realSubId} finished evaluation: ${backendSub.score} / ${backendSub.max_score} points (${backendSub.test_results?.filter((t) => t.passed === 1).length ?? 0}/${backendSub.test_results?.length ?? 0} tests passed).`,
+              type: "submission",
+              priority: failed ? "warning" : "info",
+            });
+            addLog(
+              failed ? "WARN" : "SUBMISSION",
+              "Grading Worker",
+              failed
+                ? `Submission #${realSubId} could not be graded: ${backendSub.error_summary}`
+                : `Submission #${realSubId} evaluated: ${backendSub.score}/${backendSub.max_score} points.`
+            );
+            return backendSub;
+          }
+        }
+      }
+
+      // Offline fallback: local heuristic grading.
+      setTimeout(() => {
+        const outcome = gradeSubmissionLocally(
+          newSubId,
+          question,
+          questionTestCases,
+          data.source_code
+        );
+
+        setSubmissions((prev) =>
+          prev.map((s) =>
+            s.id === newSubId
+              ? {
+                  ...s,
+                  status: outcome.status,
+                  score: outcome.score,
+                  error_summary: outcome.error_summary,
+                  graded_at: new Date().toISOString(),
+                  test_results: outcome.test_results,
+                }
+              : s
+          )
+        );
+
+        const passedCount = outcome.test_results.filter((result) => result.passed === 1).length;
+        const totalCount = outcome.test_results.length;
+
+        addNotification({
+          title: outcome.status === "error" ? "Grading Failed" : "Grading Completed",
+          message:
+            outcome.status === "error"
+              ? `Submission #${newSubId}: ${outcome.error_summary}`
+              : `Submission #${newSubId} finished evaluation: ${outcome.score} / ${maxScore} points (${passedCount}/${totalCount} tests passed).`,
+          type: "submission",
+          priority: outcome.status === "error" || (outcome.score ?? 0) < maxScore ? "warning" : "info",
+        });
+
+        addLog(
+          outcome.status === "error" ? "WARN" : "SUBMISSION",
+          "Grading Worker",
           outcome.status === "error"
-            ? `Submission #${newSubId}: ${outcome.error_summary}`
-            : `Submission #${newSubId} finished evaluation: ${outcome.score} / ${maxScore} points (${passedCount}/${totalCount} tests passed).`,
-        type: "submission",
-        priority: outcome.status === "error" || (outcome.score ?? 0) < maxScore ? "warning" : "info",
-      });
+            ? `Submission #${newSubId} could not be graded: ${outcome.error_summary}`
+            : `Submission #${newSubId} evaluated: ${outcome.score}/${maxScore} points. Only passing test cases earned points.`
+        );
+      }, 2400);
 
-      addLog(
-        outcome.status === "error" ? "WARN" : "SUBMISSION",
-        "Grading Worker",
-        outcome.status === "error"
-          ? `Submission #${newSubId} could not be graded: ${outcome.error_summary}`
-          : `Submission #${newSubId} evaluated: ${outcome.score}/${maxScore} points. Only passing test cases earned points.`
-      );
-    }, 2400);
+      return initialSub;
+    };
 
-    return initialSub;
-  };
-
-  const regradeSubmission = (id: number) => {
+  const regradeSubmission = async (id: number) => {
     const target = submissions.find((s) => s.id === id);
     if (!target) {
       addLog("WARN", "Admin Trigger", `Re-grade requested for unknown submission #${id}`);
@@ -719,69 +975,128 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     );
     addLog("INFO", "Admin Trigger", `Teacher triggered re-grade for submission #${id}`);
 
-    setTimeout(() => {
-      if (!question) {
+      // Real backend regrade when online.
+      if (token) {
+        const ok = await regradeRequest(id, token);
+        if (ok) {
+          let result: BackendSubmissionResult | null = null;
+          let deadline = Date.now() + 30000;
+          while (Date.now() < deadline) {
+            result = await fetchSubmissionResult(id, token);
+            const status = result?.submission?.status;
+            if (status === "completed" || status === "error") break;
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+          }
+          if (result) {
+            const updated: Submission = {
+              ...target,
+              status: result.submission.status as Submission["status"],
+              score: result.submission.score,
+              error_summary: result.submission.error_summary,
+              graded_at: new Date().toISOString(),
+              test_results: (result.test_results || []).map((tr) => ({
+                id: tr.id,
+                submission_id: id,
+                test_case_id: tr.test_case_id,
+                is_sample: tr.is_sample,
+                passed: tr.passed,
+                stdout: tr.stdout || "",
+                stderr: tr.stderr || "",
+                compile_output: tr.compile_output || "",
+                exit_code: tr.exit_code,
+                time: tr.time,
+                memory: tr.memory,
+                input_data: tr.input_data || "",
+                expected_output: tr.expected_output || "",
+                awarded_points: tr.awarded_points,
+                score_weight: tr.score_weight,
+                message: tr.message,
+              })),
+            };
+            setSubmissions((prev) => prev.map((s) => (s.id === id ? updated : s)));
+            if (updated.status === "error") {
+              addNotification({
+                title: "Re-grade Failed",
+                message: `Submission #${id}: ${updated.error_summary}`,
+                type: "system",
+              });
+              addLog("WARN", "Grading Worker", `Re-grade failed for #${id}: ${updated.error_summary}`);
+              return;
+            }
+            addNotification({
+              title: "Re-grade Completed",
+              message: `Submission #${id} re-evaluated. Score: ${updated.score}/${target.max_score}.`,
+              type: "system",
+            });
+            addLog("SUBMISSION", "Grading Worker", `Re-grade completed for #${id}. Score: ${updated.score}/${target.max_score}`);
+            return;
+          }
+        }
+      }
+
+      setTimeout(() => {
+        if (!question) {
+          setSubmissions((prev) =>
+            prev.map((s) =>
+              s.id === id
+                ? {
+                    ...s,
+                    status: "error",
+                    score: null,
+                    error_summary: "Question not found in the database. Re-grade aborted.",
+                  }
+                : s
+            )
+          );
+          addLog("WARN", "Grading Worker", `Re-grade failed for #${id}: question not found.`);
+          return;
+        }
+
+        const outcome = gradeSubmissionLocally(id, question, questionTestCases, target.source_code);
+        const previousScore = target.score;
+
         setSubmissions((prev) =>
           prev.map((s) =>
             s.id === id
               ? {
                   ...s,
-                  status: "error",
-                  score: null,
-                  error_summary: "Question not found in the database. Re-grade aborted.",
+                  status: outcome.status,
+                  score: outcome.score,
+                  error_summary: outcome.error_summary,
+                  graded_at: new Date().toISOString(),
+                  test_results: outcome.test_results,
                 }
               : s
           )
         );
-        addLog("WARN", "Grading Worker", `Re-grade failed for #${id}: question not found.`);
-        return;
-      }
 
-      const outcome = gradeSubmissionLocally(id, question, questionTestCases, target.source_code);
-      const previousScore = target.score;
+        if (outcome.status === "error") {
+          addNotification({
+            title: "Re-grade Failed",
+            message: `Submission #${id}: ${outcome.error_summary}`,
+            type: "system",
+          });
+          addLog("WARN", "Grading Worker", `Re-grade failed for #${id}: ${outcome.error_summary}`);
+          return;
+        }
 
-      setSubmissions((prev) =>
-        prev.map((s) =>
-          s.id === id
-            ? {
-                ...s,
-                status: outcome.status,
-                score: outcome.score,
-                error_summary: outcome.error_summary,
-                graded_at: new Date().toISOString(),
-                test_results: outcome.test_results,
-              }
-            : s
-        )
-      );
+        const change =
+          previousScore == null
+            ? `Score set to ${outcome.score}/${target.max_score}.`
+            : previousScore === outcome.score
+            ? `Score unchanged at ${outcome.score}/${target.max_score}.`
+            : previousScore < (outcome.score ?? 0)
+            ? `Score increased from ${previousScore} to ${outcome.score}/${target.max_score}.`
+            : `Score adjusted from ${previousScore} to ${outcome.score}/${target.max_score}.`;
 
-      if (outcome.status === "error") {
         addNotification({
-          title: "Re-grade Failed",
-          message: `Submission #${id}: ${outcome.error_summary}`,
+          title: "Re-grade Completed",
+          message: `Submission #${id} re-evaluated. ${change}`,
           type: "system",
         });
-        addLog("WARN", "Grading Worker", `Re-grade failed for #${id}: ${outcome.error_summary}`);
-        return;
-      }
-
-      const change =
-        previousScore == null
-          ? `Score set to ${outcome.score}/${target.max_score}.`
-          : previousScore === outcome.score
-          ? `Score unchanged at ${outcome.score}/${target.max_score}.`
-          : previousScore < (outcome.score ?? 0)
-          ? `Score increased from ${previousScore} to ${outcome.score}/${target.max_score}.`
-          : `Score adjusted from ${previousScore} to ${outcome.score}/${target.max_score}.`;
-
-      addNotification({
-        title: "Re-grade Completed",
-        message: `Submission #${id} re-evaluated. ${change}`,
-        type: "system",
-      });
-      addLog("SUBMISSION", "Grading Worker", `Re-grade completed for #${id}. ${change}`);
-    }, 1600);
-  };
+        addLog("SUBMISSION", "Grading Worker", `Re-grade completed for #${id}. ${change}`);
+      }, 1600);
+    };
 
   return (
     <SocketContext.Provider

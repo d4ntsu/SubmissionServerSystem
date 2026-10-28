@@ -5,7 +5,6 @@ import Link from "next/link";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { useSocket } from "@/lib/socket-context";
-import { MOCK_EXAMS } from "@/lib/api";
 import {
   Megaphone,
   Send,

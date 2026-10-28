@@ -5,7 +5,7 @@ import Link from "next/link";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { useAuth } from "@/lib/auth-context";
-import { MOCK_EXAMS } from "@/lib/api";
+import { useSocket } from "@/lib/socket-context";
 import {
   FileCode2,
   Clock,
@@ -19,6 +19,7 @@ import {
 
 export default function ExamsListPage() {
   const { isTeacher } = useAuth();
+  const { exams } = useSocket();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
@@ -39,7 +40,7 @@ export default function ExamsListPage() {
     }
   };
 
-  const filtered = MOCK_EXAMS.filter((exam) => {
+  const filtered = exams.filter((exam) => {
     const matchesSearch =
       exam.title.toLowerCase().includes(search.toLowerCase()) ||
       exam.description.toLowerCase().includes(search.toLowerCase());
