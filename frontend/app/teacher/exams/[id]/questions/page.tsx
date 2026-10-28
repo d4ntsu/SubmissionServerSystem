@@ -127,7 +127,7 @@ export default function TeacherQuestionsManagementPage() {
     setQMethodName(q.method_name || "solve");
     setQMethodMode(q.method_mode || "STATIC");
     setQReturnType(q.return_type || "int");
-    setQParamTypes(q.parameter_types || "int, int");
+    setQParamTypes(q.parameter_types ?? "");
     setIsQuestionModalOpen(true);
   };
 
@@ -277,7 +277,7 @@ export default function TeacherQuestionsManagementPage() {
                       ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
                       : "bg-white text-amber-700 border-amber-200 hover:bg-amber-50"
                   }`}
-                  title="Run a reference attempt and verify grading before opening the exam"
+                  title="Check test data and grader configuration before opening the exam"
                 >
                   <FlaskConical className="w-3.5 h-3.5" />
                   <span>
@@ -961,4 +961,3 @@ export default function TeacherQuestionsManagementPage() {
     </ProtectedRoute>
   );
 }
-

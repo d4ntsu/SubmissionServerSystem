@@ -627,7 +627,7 @@ export default function ExamWorkspacePage() {
                     ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
                     : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
                 }`}
-                title="Run a reference attempt and verify the exam result before opening it to students"
+                title="Check test data and grader configuration before opening the exam"
               >
                 <FlaskConical className="w-3.5 h-3.5" />
                 <span>

@@ -53,10 +53,17 @@ def get_db():
 def run_lightweight_migrations() -> None:
     """Add columns introduced after the initial schema without requiring Alembic."""
     inspector = inspect(engine)
-    if "exams" not in inspector.get_table_names():
-        return
-
-    columns = {column["name"] for column in inspector.get_columns("exams")}
-    if "access_password_hash" not in columns:
-        with engine.begin() as connection:
-            connection.execute(text("ALTER TABLE exams ADD COLUMN access_password_hash VARCHAR(255)"))
+    tables = set(inspector.get_table_names())
+    with engine.begin() as connection:
+        if "exams" in tables:
+            columns = {column["name"] for column in inspector.get_columns("exams")}
+            if "access_password_hash" not in columns:
+                connection.execute(
+                    text("ALTER TABLE exams ADD COLUMN access_password_hash VARCHAR(255)")
+                )
+        if "questions" in tables:
+            columns = {column["name"] for column in inspector.get_columns("questions")}
+            if "method_mode" not in columns:
+                connection.execute(
+                    text("ALTER TABLE questions ADD COLUMN method_mode VARCHAR(10) NOT NULL DEFAULT 'STATIC'")
+                )

@@ -1,5 +1,8 @@
 """Seed the database with default teacher and mock student accounts.
 
+Run these commands from the backend directory with its virtual environment
+activated.
+
 Usage:
     python -m app.cli seed           # create default accounts (skip if exist)
     python -m app.cli seed --force   # wipe everything and re-seed
@@ -8,7 +11,6 @@ Usage:
 
 import argparse
 import random
-import sys
 
 
 def _hash_password(plain: str) -> str:
@@ -41,15 +43,25 @@ def _seed_users(force: bool = False) -> None:
     db = SessionLocal()
     try:
         if force:
-                    print("  Dropping existing data (FK-safe order) ...")
-                    from app.models.submission import SubmissionTestResult, Submission
-                    from app.models.test_case import TestCase
-                    from app.models.question import Question
-                    from app.models.exam import Exam, ExamParticipant
-                    from app.models.announcement import Announcement
-                    for model in (SubmissionTestResult, Submission, ExamParticipant, Announcement, TestCase, Question, Exam, User):
-                        db.query(model).delete()
-                    db.commit()
+            print("  Dropping existing data (FK-safe order) ...")
+            from app.models.submission import SubmissionTestResult, Submission
+            from app.models.test_case import TestCase
+            from app.models.question import Question
+            from app.models.exam import Exam, ExamParticipant
+            from app.models.announcement import Announcement
+
+            for model in (
+                SubmissionTestResult,
+                Submission,
+                ExamParticipant,
+                Announcement,
+                TestCase,
+                Question,
+                Exam,
+                User,
+            ):
+                db.query(model).delete()
+            db.commit()
 
         if not force and _teacher_exists():
             print("  Default accounts already exist (use --force to re-seed).")

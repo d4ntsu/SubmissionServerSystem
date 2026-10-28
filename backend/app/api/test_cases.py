@@ -50,7 +50,16 @@ def list_test_cases(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return db.query(TestCase).filter(TestCase.question_id == question_id).all()
+    question = db.get(Question, question_id)
+    if not question:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found")
+    if current_user.role == UserRole.teacher:
+        _require_question_owner(db, question_id, current_user)
+
+    query = db.query(TestCase).filter(TestCase.question_id == question_id)
+    if current_user.role != UserRole.teacher:
+        query = query.filter(TestCase.is_hidden == 0)
+    return query.all()
 
 
 @router.delete("/{test_case_id}", status_code=status.HTTP_204_NO_CONTENT)

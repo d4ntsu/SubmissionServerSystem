@@ -24,6 +24,7 @@ class Question(Base):
     # For java_class: the expected class name and method signature
     class_name = Column(String(100), nullable=True)
     method_signature = Column(String(500), nullable=True)
+    method_mode = Column(String(10), nullable=False, default="STATIC")
     created_at = Column(DateTime, server_default=func.now())
 
     exam = relationship("Exam", back_populates="questions")

@@ -207,3 +207,53 @@ async def test_missing_expected_answer_fails_submission():
         assert submission.status == SubmissionStatus.error
         assert "no expected answer" in (submission.error_summary or "").lower()
         mock_piston.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_java_class_method_submission_is_invoked_with_each_test_case():
+    with patch("app.services.grading_service.SessionLocal") as mock_session_cls, \
+         patch("app.services.grading_service.PistonClient") as mock_piston_cls:
+        mock_db = mock_session_cls.return_value
+        mock_piston = mock_piston_cls.return_value.__aenter__.return_value
+
+        question = Question(
+            id=5,
+            exam_id=1,
+            question_type=QuestionType.java_class,
+            max_score=20,
+            class_name="Calculator",
+            method_signature="add(int, int): int",
+            method_mode="STATIC",
+        )
+        submission = Submission(
+            id=10,
+            student_id=1,
+            question_id=5,
+            language="java",
+            source_code="public class Calculator { public static int add(int a, int b) { return a + b; } }",
+            status=SubmissionStatus.running,
+            max_score=20,
+        )
+        test_cases = [
+            TestCase(id=20, question_id=5, input_data="2, 3", expected_output="5", score_weight=1),
+            TestCase(id=21, question_id=5, input_data="10, 15", expected_output="25", score_weight=3),
+        ]
+        mock_db.get.side_effect = lambda model, _pk: {
+            Submission: submission,
+            Question: question,
+        }.get(model)
+        mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = test_cases
+        mock_piston.execute.side_effect = [
+            _make_execution_result("5"),
+            _make_execution_result("0"),
+        ]
+
+        await grade_submission(submission.id)
+
+        assert submission.status == SubmissionStatus.completed
+        assert submission.score == 5.0
+        assert mock_piston.execute.call_count == 2
+        first_call = mock_piston.execute.call_args_list[0].kwargs
+        assert first_call["language"] == "java"
+        assert [file["name"] for file in first_call["files"]] == ["Calculator.java", "Main.java"]
+        assert "getDeclaredMethod" in first_call["files"][1]["content"]

@@ -130,4 +130,3 @@ export interface RealtimeEventLog {
   message: string;
   details?: Record<string, any>;
 }
-

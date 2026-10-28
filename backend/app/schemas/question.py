@@ -14,6 +14,7 @@ class QuestionCreate(BaseModel):
     allowed_languages: str = "java"
     class_name: str | None = Field(default=None, max_length=100)
     method_signature: str | None = Field(default=None, max_length=500)
+    method_mode: str = Field(default="STATIC", pattern="^(STATIC|INSTANCE)$")
 
 
 class QuestionUpdate(BaseModel):
@@ -24,6 +25,7 @@ class QuestionUpdate(BaseModel):
     allowed_languages: str | None = None
     class_name: str | None = Field(default=None, max_length=100)
     method_signature: str | None = Field(default=None, max_length=500)
+    method_mode: str | None = Field(default=None, pattern="^(STATIC|INSTANCE)$")
 
 
 class QuestionResponse(BaseModel):
@@ -36,6 +38,7 @@ class QuestionResponse(BaseModel):
     allowed_languages: str
     class_name: str | None = None
     method_signature: str | None = None
+    method_mode: str = "STATIC"
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}

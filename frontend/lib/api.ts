@@ -854,6 +854,7 @@ export interface CreateQuestionPayload {
   allowed_languages?: string;
   class_name?: string | null;
   method_signature?: string | null;
+  method_mode?: "STATIC" | "INSTANCE";
 }
 
 export function toBackendQuestionType(qt: QuestionType): "stdio" | "java_class" {
@@ -878,13 +879,18 @@ export type BackendQuestion = {
   allowed_languages: string;
   class_name: string | null;
   method_signature: string | null;
+  method_mode: "STATIC" | "INSTANCE";
   created_at?: string | null;
 };
 
 /** Map a backend QuestionResponse to the frontend Question shape. */
 export function toFrontendQuestion(q: BackendQuestion): Question {
   const methodSignature = q.method_signature || "";
-  const [methodName = "", parameterTypes = ""] = methodSignature.split("(");
+  const signatureMatch = methodSignature.match(/^([^(]+)\(([^)]*)\)\s*:\s*(.+)$/);
+  const allowedLanguage = q.allowed_languages
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
   return {
     id: q.id,
     exam_id: q.exam_id,
@@ -893,12 +899,12 @@ export function toFrontendQuestion(q: BackendQuestion): Question {
     points: q.max_score,
     question_type: toFrontendQuestionType(q.question_type),
     time_limit: 2,
-    language: "java",
+    language: allowedLanguage === "python" ? "python" : "java",
     class_name: q.class_name,
-    method_name: methodName.trim() || null,
-    method_mode: "STATIC",
-    return_type: "int",
-    parameter_types: parameterTypes.replace(")", "").trim() || null,
+    method_name: signatureMatch?.[1].trim() || null,
+    method_mode: q.method_mode || "STATIC",
+    return_type: signatureMatch?.[3].trim() || null,
+    parameter_types: signatureMatch ? signatureMatch[2].trim() : null,
     show_result_to_student: true,
   };
 }
@@ -951,22 +957,26 @@ export type BackendTestCase = {
   created_at?: string | null;
 };
 
-export function toFrontendTestCase(tc: BackendTestCase): TestCase {
+export function toFrontendTestCase(
+  tc: BackendTestCase,
+  questionType: Question["question_type"] = "STDIN_STDOUT"
+): TestCase {
   return {
     id: tc.id,
     question_id: tc.question_id,
     is_sample: !tc.is_hidden,
     weight: tc.score_weight,
-    stdin: tc.input_data,
-    expected_stdout: tc.expected_output,
-    arguments: null,
-    expected_return: null,
+    stdin: questionType === "STDIN_STDOUT" ? tc.input_data : "",
+    expected_stdout: questionType === "STDIN_STDOUT" ? tc.expected_output : "",
+    arguments: questionType === "JAVA_CLASS_METHOD" ? tc.input_data : null,
+    expected_return: questionType === "JAVA_CLASS_METHOD" ? tc.expected_output : null,
   };
 }
 
 export async function createTestCaseRequest(
   payload: CreateTestCasePayload,
-  token?: string
+  token?: string,
+  questionType: Question["question_type"] = "STDIN_STDOUT"
 ): Promise<TestCase | null> {
   try {
     const res = await fetch(`${API_BASE_URL}/test-cases`, {
@@ -976,7 +986,7 @@ export async function createTestCaseRequest(
     });
     if (!res.ok) return null;
     const data = await res.json();
-    return toFrontendTestCase(data);
+    return toFrontendTestCase(data, questionType);
   } catch (err) {
     return null;
   }

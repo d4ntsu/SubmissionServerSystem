@@ -346,7 +346,7 @@ The student writes a program that reads input and prints output. The grader runs
 ### Type B: Java class/method
 The question specifies a required class and method. For example, a question may require a `Calculator` class with an `add(int, int)` method.
 
-The Java grading flow should:
+The Java grading flow:
 1. Keep the required class name, method name, parameter types, return type, and invocation mode in server-side question configuration.
 2. Build a test harness that loads/compiles the student's submission and checks the class/method using Java Reflection.
 3. Verify that the method signature is compatible with the question.
@@ -354,12 +354,13 @@ The Java grading flow should:
 5. Compare returned values with expected results.
 6. Produce a structured grading result for the Python backend.
 
-Important implementation details:
+Current implementation details:
 - Reflection is not a security sandbox. Student code must still run inside Piston or another appropriately isolated environment.
 - Do not expose hidden expected values or hidden tests in files or source code accessible to students.
-- Avoid brittle string parsing of Java source as the primary method of checking class structure.
-- Define behavior for overloaded methods, packages, constructors, static versus instance methods, exceptions, and supported data types.
-- Confirm how Piston accepts multiple files and custom harness files before implementing the final request format.
+- The required class must be in the default package, and instance methods need an accessible no-argument constructor.
+- Supported parameter and return types are Java primitives, their boxed wrappers, and `String`.
+- Method arguments are comma-separated; quote string values containing commas.
+- Reflection resolves the configured method by exact name and parameter types. Overloaded methods are selected by that signature.
 - Do not assume that a hidden test remains secret if it is embedded in a file visible to the submitted program or student. Treat all student-executable test data as potentially observable.
 
 ## 9. Realtime Message Protocol
@@ -505,7 +506,7 @@ Current status: the Piston client and its unit tests exist; submission endpoints
 - Add teacher announcements, exam lifecycle events, online/offline status, and submission-status notifications.
 - Test multiple concurrent clients, disconnections, reconnects, malformed messages, and unauthorized event attempts.
 
-### Phase 6 — Java Reflection grading
+### Java Reflection grading
 - Implement and test the Java harness separately with sample classes.
 - Integrate class/method questions with Piston.
 - Test signature mismatch, overloaded methods, exceptions, invalid return values, and multiple test cases.

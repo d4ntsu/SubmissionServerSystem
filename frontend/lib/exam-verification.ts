@@ -1,5 +1,4 @@
-import { Exam, Question, Submission, TestCase } from "@/types";
-import { buildExamResult, ExamResultStatus, formatScore } from "./exam-results";
+import { Exam, Question, TestCase } from "@/types";
 import { gradeSubmissionLocally } from "./grading";
 
 export interface VerificationCheck {
@@ -23,9 +22,9 @@ export interface ExamVerification {
   examTitle: string;
   checkedAt: string;
   passed: boolean;
-  totalScore: number;
+  totalScore: number | null;
   totalPoints: number;
-  resultStatus: ExamResultStatus | "no_questions";
+  resultStatus: "ready" | "needs_fixes" | "no_questions";
   questions: QuestionVerification[];
 }
 
@@ -35,7 +34,7 @@ export interface ExamVerificationSummary {
   passed: boolean;
 }
 
-const REFERENCE_SOLUTION = `import java.util.Scanner;
+const DEMO_REFERENCE_SOLUTION = `import java.util.Scanner;
 
 public class Solution {
     public static void main(String[] args) {
@@ -55,24 +54,53 @@ public class Solution {
     }
 
     public static int evaluateExpression(String op, int a, int b) {
-        if (op.equals("add")) {
-            return a + b;
-        }
-        if (op.equals("sub")) {
-            return a - b;
-        }
-        if (op.equals("mul")) {
-            return a * b;
-        }
-        if (op.equals("div")) {
-            if (b == 0) {
-                return -1;
-            }
-            return a / b;
-        }
+        if (op.equals("add")) return a + b;
+        if (op.equals("sub")) return a - b;
+        if (op.equals("mul")) return a * b;
+        if (op.equals("div")) return b == 0 ? -1 : a / b;
         return 0;
     }
 }`;
+
+const JAVA_METHOD_TYPES = new Set([
+  "boolean",
+  "byte",
+  "short",
+  "int",
+  "long",
+  "float",
+  "double",
+  "char",
+  "String",
+  "Boolean",
+  "Byte",
+  "Short",
+  "Integer",
+  "Long",
+  "Float",
+  "Double",
+  "Character",
+]);
+const JAVA_IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+function methodArgumentCount(argumentsText: string): number | null {
+  if (!argumentsText.trim()) return 0;
+  let count = 1;
+  let insideQuotes = false;
+  for (let index = 0; index < argumentsText.length; index += 1) {
+    const character = argumentsText[index];
+    if (character === '"') {
+      if (insideQuotes && argumentsText[index + 1] === '"') {
+        index += 1;
+      } else {
+        insideQuotes = !insideQuotes;
+      }
+    } else if (character === "," && !insideQuotes) {
+      count += 1;
+    }
+  }
+  return insideQuotes ? null : count;
+}
 
 function expectedAnswer(question: Question, testCase: TestCase): string {
   const value =
@@ -82,30 +110,77 @@ function expectedAnswer(question: Question, testCase: TestCase): string {
   return (value || "").trim();
 }
 
+function hasGradingContract(question: Question): boolean {
+  if (question.question_type === "STDIN_STDOUT") {
+    return question.language === "java" || question.language === "python";
+  }
+  if (
+    question.question_type === "JAVA_CLASS_METHOD" &&
+    question.language === "java" &&
+    question.class_name &&
+    JAVA_IDENTIFIER.test(question.class_name) &&
+    question.method_name &&
+    JAVA_IDENTIFIER.test(question.method_name) &&
+    question.return_type?.trim() &&
+    (question.method_mode === "STATIC" || question.method_mode === "INSTANCE") &&
+    question.parameter_types !== undefined
+  ) {
+    const parameterTypes = question.parameter_types
+      ? question.parameter_types.split(",").map((type) => type.trim())
+      : [];
+    return (
+      JAVA_METHOD_TYPES.has(question.return_type) &&
+      parameterTypes.every((type) => JAVA_METHOD_TYPES.has(type))
+    );
+  }
+  return false;
+}
+
 export function buildExamVerification(
   exam: Exam | undefined,
   examId: number,
   examQuestions: Question[],
-  testCasesByQuestion: Record<number, TestCase[]>
+  testCasesByQuestion: Record<number, TestCase[]>,
+  backendGradingAvailable: boolean
 ): ExamVerification {
   const checkedAt = new Date().toISOString();
   const examTitle = exam?.title || `Examination #${examId}`;
+  let localDemoScore = 0;
+  let localDemoGradingAvailable = true;
 
-  const questions: QuestionVerification[] = examQuestions.map((question) => {
+  const questions = examQuestions.map((question): QuestionVerification => {
     const cases = testCasesByQuestion[question.id] || [];
-    const missingAnswers = cases.filter(
-      (testCase) => !expectedAnswer(question, testCase)
+    const missingAnswers = cases.filter((testCase) => !expectedAnswer(question, testCase));
+    const invalidWeights = cases.filter(
+      (testCase) => !Number.isFinite(testCase.weight) || testCase.weight <= 0
     );
-    const outcome = gradeSubmissionLocally(
-      900000 + question.id,
-      question,
-      cases,
-      REFERENCE_SOLUTION
-    );
-    const fullScoreReached =
-      outcome.status === "completed" &&
-      outcome.score !== null &&
-      outcome.score >= question.points - 0.001;
+    const methodArgumentsValid =
+      question.question_type !== "JAVA_CLASS_METHOD" ||
+      cases.every(
+        (testCase) =>
+          methodArgumentCount(testCase.arguments || "") ===
+          (question.parameter_types
+            ? question.parameter_types.split(",").filter((type) => type.trim()).length
+            : 0)
+      );
+    const localOutcome = backendGradingAvailable
+      ? null
+      : gradeSubmissionLocally(
+          900000 + question.id,
+          question,
+          cases,
+          DEMO_REFERENCE_SOLUTION
+        );
+    const localQuestionSupported = localOutcome?.status === "completed";
+    if (localQuestionSupported && localOutcome.score !== null) {
+      localDemoScore += localOutcome.score;
+    } else if (!backendGradingAvailable) {
+      localDemoGradingAvailable = false;
+    }
+
+    const gradingAvailable = backendGradingAvailable
+      ? hasGradingContract(question)
+      : localQuestionSupported;
 
     const checks: VerificationCheck[] = [
       {
@@ -114,7 +189,7 @@ export function buildExamVerification(
         detail:
           cases.length > 0
             ? `${cases.length} test case${cases.length === 1 ? "" : "s"} found`
-            : "No test cases are attached to this question",
+            : "Add at least one test case to this question",
       },
       {
         label: "Expected answers stored",
@@ -123,24 +198,47 @@ export function buildExamVerification(
           cases.length === 0
             ? "Add at least one test case with an expected answer"
             : missingAnswers.length > 0
-            ? `${missingAnswers.length} test case${missingAnswers.length === 1 ? "" : "s"} missing an expected answer`
-            : "Every test case has an expected answer",
+              ? `${missingAnswers.length} test case${missingAnswers.length === 1 ? "" : "s"} missing an expected answer`
+              : "Every test case has an expected answer",
       },
       {
-        label: "Grading reference recognized",
-        passed: outcome.status !== "error",
-        detail:
-          outcome.status === "error"
-            ? outcome.error_summary || "The grader rejected this question"
-            : "Reference solution was accepted by the grader",
+        label: "Grading configuration recognized",
+        passed: gradingAvailable,
+        detail: backendGradingAvailable
+          ? gradingAvailable
+            ? question.question_type === "JAVA_CLASS_METHOD"
+              ? "Backend Java method grader and method contract are configured"
+              : "Backend stdin/stdout grader is available"
+            : "The question type or Java method contract is not supported"
+          : gradingAvailable
+            ? "This seeded question is supported by the offline demo grader"
+            : "Custom questions require the backend grading service; sign in with a backend account",
       },
       {
-        label: "Full score reachable",
-        passed: fullScoreReached,
+        label: "Score weights valid",
+        passed: cases.length > 0 && invalidWeights.length === 0 && question.points > 0,
         detail:
-          outcome.status === "completed"
-            ? `${formatScore(outcome.score)} / ${formatScore(question.points)} points on the reference run`
-            : "A reference run could not produce a full score",
+          cases.length === 0
+            ? "Add test cases with positive score weights"
+            : question.points <= 0
+              ? "Set a positive total score for this question"
+              : invalidWeights.length > 0
+              ? `${invalidWeights.length} test case${invalidWeights.length === 1 ? "" : "s"} must have a positive score weight`
+              : "Every test case has a positive score weight",
+      },
+      {
+        label: "Method arguments match signature",
+        passed:
+          question.question_type !== "JAVA_CLASS_METHOD" ||
+          (cases.length > 0 && methodArgumentsValid),
+        detail:
+          question.question_type !== "JAVA_CLASS_METHOD"
+            ? "Not required for stdin/stdout questions"
+            : cases.length === 0
+              ? "Add method test cases matching the configured parameter count"
+              : methodArgumentsValid
+                ? "Every test case has the configured number of arguments"
+                : "A test case has malformed arguments or the wrong number of values",
       },
     ];
 
@@ -149,57 +247,27 @@ export function buildExamVerification(
       title: question.title,
       points: question.points,
       passed: checks.every((check) => check.passed),
-      score: outcome.status === "completed" ? outcome.score : null,
+      score:
+        localOutcome?.status === "completed" ? localOutcome.score : null,
       checks,
-      errorSummary: outcome.status === "error" ? outcome.error_summary : null,
+      errorSummary:
+        localOutcome?.status === "error" ? localOutcome.error_summary : null,
     };
   });
 
-  const syntheticSubmissions: Submission[] = examQuestions.map((question) => {
-    const cases = testCasesByQuestion[question.id] || [];
-    const outcome = gradeSubmissionLocally(
-      900000 + question.id,
-      question,
-      cases,
-      REFERENCE_SOLUTION
-    );
-    return {
-      id: 900000 + question.id,
-      student_id: 0,
-      student_name: "Verification Run",
-      student_username: "verification",
-      question_id: question.id,
-      question_title: question.title,
-      exam_id: examId,
-      exam_title: examTitle,
-      language: question.language,
-      source_code: REFERENCE_SOLUTION,
-      status: outcome.status,
-      score: outcome.score,
-      max_score: question.points,
-      submitted_at: checkedAt,
-      graded_at: checkedAt,
-      test_results: outcome.test_results,
-      error_summary: outcome.error_summary,
-    };
-  });
-
-  const projectedResult = buildExamResult(
-    examId,
-    exam,
-    examQuestions,
-    syntheticSubmissions,
-    false
-  );
-
+  const passed = questions.length > 0 && questions.every((question) => question.passed);
   return {
     examId,
     examTitle,
     checkedAt,
-    passed: questions.length > 0 && questions.every((question) => question.passed),
-    totalScore: projectedResult.totalScore,
-    totalPoints: projectedResult.totalPoints,
-    resultStatus: questions.length === 0 ? "no_questions" : projectedResult.status,
+    passed,
+    totalScore:
+      !backendGradingAvailable && localDemoGradingAvailable
+        ? localDemoScore
+        : null,
+    totalPoints: examQuestions.reduce((sum, question) => sum + question.points, 0),
+    resultStatus:
+      questions.length === 0 ? "no_questions" : passed ? "ready" : "needs_fixes",
     questions,
   };
 }

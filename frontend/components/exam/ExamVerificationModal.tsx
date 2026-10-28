@@ -22,13 +22,8 @@ interface ExamVerificationModalProps {
 }
 
 const RESULT_STATUS_LABEL: Record<string, string> = {
-  passed: "PASSED",
-  partial: "PARTIAL",
-  failed: "NOT PASSED",
-  grading: "GRADING",
-  error: "ERROR",
-  hidden: "HIDDEN",
-  not_submitted: "NOT SUBMITTED",
+  ready: "READY",
+  needs_fixes: "NEEDS FIXES",
   no_questions: "NO QUESTIONS",
 };
 
@@ -114,8 +109,8 @@ export function ExamVerificationModal({
                 {exam?.title || report?.examTitle || `Examination #${examId}`}
               </h2>
               <p className="mt-1 text-[11px] text-slate-400">
-                Runs a reference attempt against every question to verify grading and the final
-                result before the exam is opened to students.
+                Checks test cases, expected answers, score weights, and grader configuration
+                before the exam is opened to students.
               </p>
             </div>
           </div>
@@ -133,7 +128,7 @@ export function ExamVerificationModal({
           {isRunning && !report ? (
             <div className="flex flex-col items-center justify-center gap-3 py-14 text-slate-500">
               <Loader2 className="w-6 h-6 animate-spin text-orange-500" />
-              <span className="text-xs font-mono">Running reference attempt for all questions...</span>
+              <span className="text-xs font-mono">Checking exam configuration...</span>
             </div>
           ) : null}
 
@@ -169,15 +164,17 @@ export function ExamVerificationModal({
                 </div>
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono block">
-                    Projected result
+                    Demo reference score
                   </span>
                   <span className="text-lg font-black text-slate-800 font-mono">
-                    {report.totalScore} / {report.totalPoints}
+                    {report.totalScore === null
+                      ? "Not simulated"
+                      : `${report.totalScore} / ${report.totalPoints}`}
                   </span>
                 </div>
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono block">
-                    Result status
+                    Exam readiness
                   </span>
                   <span className="text-sm font-black text-slate-800 font-mono">
                     {RESULT_STATUS_LABEL[report.resultStatus] || report.resultStatus}
@@ -199,7 +196,7 @@ export function ExamVerificationModal({
                 )}
                 <span>
                   {report.passed
-                    ? "Verification passed. Every question is gradeable and the reference attempt reaches the expected result. You can now open this exam to all students."
+                    ? "Verification passed. Configured questions have a supported grader and valid test data. You can now open this exam to all students."
                     : "Verification failed. Fix the highlighted question configuration before opening this exam to students."}
                 </span>
               </div>
@@ -224,8 +221,8 @@ export function ExamVerificationModal({
                           <p className="text-[10px] text-slate-400 font-mono">
                             {question.points} pts •{" "}
                             {question.score === null
-                              ? "no score"
-                              : `${question.score} / ${question.points} on reference run`}
+                              ? `${question.points} possible points`
+                              : `${question.score} / ${question.points} demo reference score`}
                           </p>
                         </div>
                       </div>

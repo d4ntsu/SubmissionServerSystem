@@ -87,12 +87,87 @@ class TestQuestionEndpoints:
         assert resp.status_code == 201
         assert resp.json()["title"] == "Q1"
 
+    def test_create_java_method_question_persists_method_mode(self, client, teacher_token):
+        headers = {"Authorization": "Bearer " + teacher_token}
+        exam = client.post(
+            "/exams",
+            json={"title": "Java Method Exam"},
+            headers=headers,
+        )
+        response = client.post(
+            "/questions",
+            json={
+                "exam_id": exam.json()["id"],
+                "title": "Custom method",
+                "question_type": "java_class",
+                "class_name": "Calculator",
+                "method_signature": "add(int, int): int",
+                "method_mode": "INSTANCE",
+            },
+            headers=headers,
+        )
+
+        assert response.status_code == 201
+        assert response.json()["method_mode"] == "INSTANCE"
+
     def test_list_by_exam(self, client, teacher_token):
         resp = client.get("/questions?exam_id=1", headers={"Authorization": f"Bearer {teacher_token}"})
         assert resp.status_code == 200
 
 
 class TestTestCaseEndpoints:
+    def test_students_only_receive_sample_test_cases(self, client, teacher_token, student_token):
+        auth_teacher = {"Authorization": "Bearer " + teacher_token}
+        auth_student = {"Authorization": "Bearer " + student_token}
+        exam = client.post(
+            "/exams",
+            json={"title": "Hidden Test Case Exam"},
+            headers=auth_teacher,
+        )
+        question = client.post(
+            "/questions",
+            json={"exam_id": exam.json()["id"], "title": "Question"},
+            headers=auth_teacher,
+        )
+        question_id = question.json()["id"]
+
+        sample = client.post(
+            "/test-cases",
+            json={
+                "question_id": question_id,
+                "input_data": "visible",
+                "expected_output": "sample answer",
+                "is_hidden": 0,
+            },
+            headers=auth_teacher,
+        )
+        hidden = client.post(
+            "/test-cases",
+            json={
+                "question_id": question_id,
+                "input_data": "secret",
+                "expected_output": "hidden answer",
+                "is_hidden": 1,
+            },
+            headers=auth_teacher,
+        )
+        assert sample.status_code == hidden.status_code == 201
+
+        student_cases = client.get(
+            f"/test-cases/question/{question_id}",
+            headers=auth_student,
+        )
+        teacher_cases = client.get(
+            f"/test-cases/question/{question_id}",
+            headers=auth_teacher,
+        )
+
+        assert [case["expected_output"] for case in student_cases.json()] == ["sample answer"]
+        assert {case["expected_output"] for case in teacher_cases.json()} == {
+            "sample answer",
+            "hidden answer",
+        }
+
     def test_create_test_case(self, client, teacher_token):
         resp = client.post("/test-cases", json={
             "question_id": 1, "input_data": "test", "expected_output": "tset",

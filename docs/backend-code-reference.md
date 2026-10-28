@@ -37,9 +37,10 @@ backend/app/
 ├── services/
 │   ├── auth.py                      # User lookup & authentication
 │   ├── dependencies.py              # FastAPI dependency callables (auth guards)
-│   ├── submission_service.py        # Submission validation & persistence
-│   ├── grading_service.py           # Grading orchestration (Piston integration)
-│   └── piston_client.py             # Async HTTP client for Piston API v2
+│       ├── submission_service.py    # Submission validation & persistence
+│       ├── grading_service.py      # Grading orchestration (Piston integration)
+│       ├── java_method_grader.py   # Java reflection harness and argument validation
+│       └── piston_client.py        # Async HTTP client for Piston API v2
 └── workers/
     └── grading_worker.py            # Background polling worker for grading queue
 ```
@@ -575,7 +576,7 @@ Lists submissions. Students see only their own; teachers see all. Optionally fil
 1. Loads the submission — skips if not found or not in `running` status
 2. Loads the question — marks as error if not found
 3. Loads all test cases for the question — marks as error if none exist
-4. Routes to `_grade_stdio()` for stdin/stdout questions, or marks as error for unimplemented `java_class` type
+4. Routes to `_grade_stdio()` for stdin/stdout questions or `_grade_java_method()` for Java class/method questions
 5. On `PistonClientError`: marks submission as `error` with the Piston error message
 6. On any other exception: logs the traceback and marks as `error`
 
@@ -591,6 +592,9 @@ After all test cases are processed, calculates the weighted score:
 score = (sum of passed weights / total weight) × question.max_score
 ```
 Sets the submission to `completed` with the calculated score and `graded_at` timestamp.
+
+### `_grade_java_method(db, submission, question, test_cases) -> None`
+**Internal** — grades a Java class/method question by compiling the student's class together with a generated reflection harness. It validates the configured class and method signature, invokes the configured static or instance method for each test case, compares the returned value with the expected output, and calculates the same weighted score as stdin/stdout grading. Supported parameter and return types are Java primitives, their boxed wrappers, and `String`; method arguments are comma-separated values, with quoted strings supported.
 
 ### `_create_test_result(db, submission, test_case, *, passed, stdout, stderr, compile_output, exit_code) -> None`
 **Internal** — creates and persists a single `SubmissionTestResult` row.

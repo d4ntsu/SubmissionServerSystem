@@ -225,10 +225,14 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
         for (const exam of realExams) {
           const qs = await fetchQuestionsByExam(exam.id, token);
-          qByExam[exam.id] = qs.map(toFrontendQuestion);
-          for (const question of qs) {
+          const frontendQuestions = qs.map(toFrontendQuestion);
+          qByExam[exam.id] = frontendQuestions;
+
+          for (const question of frontendQuestions) {
             const testCases = await fetchTestCasesByQuestion(question.id, token);
-            tcByQ[question.id] = testCases.map(toFrontendTestCase);
+            tcByQ[question.id] = testCases.map((testCase) =>
+              toFrontendTestCase(testCase, question.question_type)
+            );
           }
         }
 
@@ -452,7 +456,13 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       casesByQuestion[question.id] = testCases[question.id] || [];
     });
 
-    const report = buildExamVerification(exam, id, examQuestions, casesByQuestion);
+    const report = buildExamVerification(
+      exam,
+      id,
+      examQuestions,
+      casesByQuestion,
+      Boolean(token)
+    );
     setExamVerifications((previous) => ({
       ...previous,
       [id]: {
@@ -624,7 +634,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       method_name: data.method_name || (data.question_type === "JAVA_CLASS_METHOD" ? "solve" : null),
       method_mode: data.method_mode || "STATIC",
       return_type: data.return_type || "int",
-      parameter_types: data.parameter_types || "int, int",
+      parameter_types: data.parameter_types ?? "int, int",
       show_result_to_student: data.show_result_to_student ?? true,
     };
 
@@ -639,8 +649,9 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
             allowed_languages: toBackendLanguage(newQ.language),
             class_name: newQ.class_name,
             method_signature: newQ.method_name
-              ? `${newQ.method_name}(${newQ.parameter_types || "int, int"}): ${newQ.return_type || "int"}`
+              ? `${newQ.method_name}(${newQ.parameter_types ?? "int, int"}): ${newQ.return_type || "int"}`
               : null,
+            method_mode: newQ.method_mode || "STATIC",
           },
           token
         );
@@ -709,8 +720,12 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     // Test Case Management actions
     const createTestCase = async (questionId: number, data: Partial<TestCase>): Promise<TestCase> => {
       const ownerExamId = examIdForQuestion(questionId);
+      const question =
+        ownerExamId === null
+          ? undefined
+          : (questions[ownerExamId] || []).find((item) => item.id === questionId);
+      const isJavaMethodQuestion = question?.question_type === "JAVA_CLASS_METHOD";
       if (ownerExamId !== null) clearExamVerification(ownerExamId);
-      const existing = testCases[questionId] || [];
       const newId = 1000 + Math.floor(Math.random() * 8999);
       const newTc: TestCase = {
         id: newId,
@@ -727,12 +742,17 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
         const created = await createTestCaseRequest(
           {
             question_id: questionId,
-            input_data: newTc.stdin || "",
-            expected_output: newTc.expected_stdout || "",
+            input_data: isJavaMethodQuestion
+              ? newTc.arguments || ""
+              : newTc.stdin || "",
+            expected_output: isJavaMethodQuestion
+              ? newTc.expected_return || ""
+              : newTc.expected_stdout || "",
             is_hidden: newTc.is_sample ? 0 : 1,
             score_weight: newTc.weight,
           },
-          token
+          token,
+          question?.question_type || "STDIN_STDOUT"
         );
         if (created) {
           setTestCases((prev) => ({
