@@ -259,9 +259,11 @@ async def test_missing_expected_answer_fails_submission():
 @pytest.mark.asyncio
 async def test_java_class_method_submission_is_invoked_with_each_test_case():
     with patch("app.services.grading_service.SessionLocal") as mock_session_cls, \
-         patch("app.services.grading_service.PistonClient") as mock_piston_cls:
+         patch(
+             "app.services.grading_service.grade_java_method",
+             new_callable=AsyncMock,
+         ) as mock_grade_method:
         mock_db = mock_session_cls.return_value
-        mock_piston = mock_piston_cls.return_value.__aenter__.return_value
 
         question = Question(
             id=5,
@@ -290,17 +292,7 @@ async def test_java_class_method_submission_is_invoked_with_each_test_case():
             Question: question,
         }.get(model)
         mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = test_cases
-        mock_piston.execute.side_effect = [
-            _make_execution_result("5"),
-            _make_execution_result("0"),
-        ]
 
         await grade_submission(submission.id)
 
-        assert submission.status == SubmissionStatus.completed
-        assert submission.score == 5.0
-        assert mock_piston.execute.call_count == 2
-        first_call = mock_piston.execute.call_args_list[0].kwargs
-        assert first_call["language"] == "java"
-        assert [file["name"] for file in first_call["files"]] == ["Calculator.java", "Main.java"]
-        assert "getDeclaredMethod" in first_call["files"][1]["content"]
+        mock_grade_method.assert_awaited_once_with(mock_db, submission, question, test_cases)

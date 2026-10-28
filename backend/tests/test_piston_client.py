@@ -101,3 +101,56 @@ async def test_execute_rejects_paths_in_source_file_names():
                 language="java",
                 files=[{"name": "../Main.java", "content": "class Main {}"}],
             )
+
+
+@pytest.mark.asyncio
+async def test_execute_can_set_limits_for_source_mode_java_compilation():
+    requests = []
+
+    async def handler(request):
+        requests.append(request)
+        if request.url.path == "/api/v2/runtimes":
+            return httpx.Response(
+                200, json=[{"language": "java", "version": "15.0.2", "aliases": []}]
+            )
+        return httpx.Response(
+            200,
+            json={
+                "language": "java",
+                "version": "15.0.2",
+                "run": {"code": 0, "stdout": ""},
+            },
+        )
+
+    async with PistonClient(
+        base_url="http://piston.test", transport=httpx.MockTransport(handler)
+    ) as client:
+        await client.execute(
+            language="java",
+            files=[{"name": "Main.java", "content": "class Main {}"}],
+            args=["Sample"],
+            run_timeout_ms=15000,
+            run_memory_limit_bytes=536870912,
+        )
+    payload = json.loads(requests[-1].content)
+    assert payload["run_timeout"] == 15000
+    assert payload["run_memory_limit"] == 536870912
+    assert payload["args"] == ["Sample"]
+
+
+@pytest.mark.parametrize(
+    "override",
+    [{"run_timeout_ms": 0}, {"run_timeout_ms": True}, {"run_memory_limit_bytes": -1}],
+)
+@pytest.mark.asyncio
+async def test_invalid_limit_overrides_are_rejected(override):
+    async with PistonClient(
+        base_url="http://piston.test",
+        transport=httpx.MockTransport(lambda request: httpx.Response(500)),
+    ) as client:
+        with pytest.raises(ValueError, match="positive integer"):
+            await client.execute(
+                language="java",
+                files=[{"name": "Main.java", "content": "class Main {}"}],
+                **override
+            )

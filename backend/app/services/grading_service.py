@@ -11,7 +11,7 @@ from app.models.submission import (
     SubmissionTestResult,
 )
 from app.models.test_case import TestCase
-from app.services.java_method_grader import build_method_harness
+from app.services.java_method_grader import grade_java_method
 from app.services.piston_client import PistonClient, PistonClientError
 from app.realtime.submission_events import publish_submission_event
 
@@ -51,11 +51,15 @@ async def grade_submission(submission_id: int) -> None:
             await _fail_submission(db, submission, "No test cases configured for this question")
             return
 
-        missing_answers = [
-            index
-            for index, test_case in enumerate(test_cases, start=1)
-            if not (test_case.expected_output or "").strip()
-        ]
+        missing_answers = (
+            [
+                index
+                for index, test_case in enumerate(test_cases, start=1)
+                if not (test_case.expected_output or "").strip()
+            ]
+            if question.question_type == QuestionType.stdio
+            else []
+        )
         if missing_answers:
             missing_list = ", ".join(f"#{index}" for index in missing_answers)
             await _fail_submission(
@@ -69,7 +73,11 @@ async def grade_submission(submission_id: int) -> None:
         if question.question_type == QuestionType.stdio:
             await _grade_stdio(db, submission, question, test_cases)
         elif question.question_type == QuestionType.java_class:
-            await _grade_java_method(db, submission, question, test_cases)
+            await grade_java_method(db, submission, question, test_cases)
+            if submission.status == SubmissionStatus.completed:
+                await publish_submission_event("submission.completed", submission.id)
+            elif submission.status == SubmissionStatus.error:
+                await publish_submission_event("submission.error", submission.id)
         else:
             await _fail_submission(db, submission, "Unsupported question type")
 
@@ -187,61 +195,6 @@ async def _grade_stdio(
     score = (earned_weight / total_weight) * question.max_score
     submission.status = SubmissionStatus.completed
     submission.score = round(score, 2)
-    submission.graded_at = datetime.now(timezone.utc)
-    db.commit()
-    await publish_submission_event("submission.completed", submission.id)
-
-
-async def _grade_java_method(
-    db: Session,
-    submission: Submission,
-    question: Question,
-    test_cases: list[TestCase],
-) -> None:
-    total_weight = sum(tc.score_weight for tc in test_cases) or 1.0
-    earned_weight = 0.0
-
-    async with PistonClient() as piston:
-        for test_case in test_cases:
-            student_file, harness, stdin = build_method_harness(question, test_case)
-            result = await piston.execute(
-                language="java",
-                files=[
-                    {"name": student_file, "content": submission.source_code},
-                    {"name": "Main.java", "content": harness},
-                ],
-                stdin=stdin,
-            )
-
-            compile_output = ""
-            if result.compile and result.compile.code != 0:
-                compile_output = result.compile.stderr or result.compile.output or "Compilation error"
-                _create_test_result(
-                    db,
-                    submission,
-                    test_case,
-                    passed=False,
-                    compile_output=compile_output,
-                )
-                continue
-
-            actual = (result.run.stdout or "").strip()
-            expected = (test_case.expected_output or "").strip()
-            passed = result.run.code == 0 and actual == expected
-            _create_test_result(
-                db,
-                submission,
-                test_case,
-                passed=passed,
-                stdout=result.run.stdout,
-                stderr=result.run.stderr,
-                exit_code=result.run.code,
-            )
-            if passed:
-                earned_weight += test_case.score_weight
-
-    submission.status = SubmissionStatus.completed
-    submission.score = round((earned_weight / total_weight) * question.max_score, 2)
     submission.graded_at = datetime.now(timezone.utc)
     db.commit()
     await publish_submission_event("submission.completed", submission.id)

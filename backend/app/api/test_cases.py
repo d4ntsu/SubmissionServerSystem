@@ -57,7 +57,7 @@ def list_test_cases(
         _require_question_owner(db, question_id, current_user)
 
     query = db.query(TestCase).filter(TestCase.question_id == question_id)
-    if current_user.role != UserRole.teacher:
+    if current_user.role == UserRole.student:
         query = query.filter(TestCase.is_hidden == 0)
     return query.all()
 
