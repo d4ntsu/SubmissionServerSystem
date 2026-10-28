@@ -21,7 +21,7 @@ import {
 
 export default function ExamDashboardPage() {
   const { user, isTeacher } = useAuth();
-  const { exams } = useSocket();
+  const { exams, isLoadingExamData, dataApiError } = useSocket();
 
   const launchExamWindow = (examId: number) => {
     const width = 1280;
@@ -48,6 +48,7 @@ export default function ExamDashboardPage() {
   const activeExams = exams.filter((e) => e.status === "started");
   const upcomingExams = exams.filter((e) => e.status === "published");
   const completedExams = exams.filter((e) => e.status === "ended");
+  const examDataReady = !isLoadingExamData && !dataApiError;
 
   return (
     <ProtectedRoute>
@@ -97,7 +98,7 @@ export default function ExamDashboardPage() {
             >
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-slate-800 tracking-tight uppercase font-mono">
-                  Available Active Examinations ({activeExams.length})
+                  Available Active Examinations ({examDataReady ? activeExams.length : "—"})
                 </span>
                 <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                   LIVE NOW
@@ -112,7 +113,22 @@ export default function ExamDashboardPage() {
 
             {activeOpen && (
               <div className="divide-y divide-slate-100">
-                {activeExams.map((exam) => (
+                {isLoadingExamData ? (
+                  <p className="p-5 text-sm text-slate-500">Loading exams...</p>
+                ) : dataApiError ? (
+                  <p className="p-5 text-sm text-red-700">
+                    Exam data could not be loaded. Use the retry action to try again.
+                  </p>
+                ) : exams.length === 0 ? (
+                  <p className="p-5 text-sm text-slate-500">
+                    No exams are currently available. Please check again later.
+                  </p>
+                ) : activeExams.length === 0 ? (
+                  <p className="p-5 text-sm text-slate-500">
+                    There are no active exams right now. Please check again later.
+                  </p>
+                ) : null}
+                {!isLoadingExamData && !dataApiError && activeExams.map((exam) => (
                   <div
                     key={exam.id}
                     className="p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5 hover:bg-slate-50/50 transition-colors"
@@ -186,7 +202,7 @@ export default function ExamDashboardPage() {
             >
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-slate-800 tracking-tight uppercase font-mono">
-                  Upcoming Scheduled Assessments ({upcomingExams.length})
+                  Upcoming Scheduled Assessments ({examDataReady ? upcomingExams.length : "—"})
                 </span>
               </div>
               <ChevronDown
@@ -198,7 +214,12 @@ export default function ExamDashboardPage() {
 
             {upcomingOpen && (
               <div className="divide-y divide-slate-100">
-                {upcomingExams.map((exam) => (
+                {!isLoadingExamData && !dataApiError && upcomingExams.length === 0 && (
+                  <p className="p-5 text-sm text-slate-500">
+                    No upcoming exams are scheduled.
+                  </p>
+                )}
+                {!isLoadingExamData && !dataApiError && upcomingExams.map((exam) => (
                   <div
                     key={exam.id}
                     className="p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5 hover:bg-slate-50/50 transition-colors"
@@ -249,7 +270,7 @@ export default function ExamDashboardPage() {
             >
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-slate-800 tracking-tight uppercase font-mono">
-                  Archived & Practice Activities ({completedExams.length})
+                  Archived & Practice Activities ({examDataReady ? completedExams.length : "—"})
                 </span>
               </div>
               <ChevronDown
@@ -261,7 +282,12 @@ export default function ExamDashboardPage() {
 
             {completedOpen && (
               <div className="divide-y divide-slate-100">
-                {completedExams.map((exam) => (
+                {!isLoadingExamData && !dataApiError && completedExams.length === 0 && (
+                  <p className="p-5 text-sm text-slate-500">
+                    No completed exams yet.
+                  </p>
+                )}
+                {!isLoadingExamData && !dataApiError && completedExams.map((exam) => (
                   <div
                     key={exam.id}
                     className="p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5 hover:bg-slate-50/50 transition-colors"

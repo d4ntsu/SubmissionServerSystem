@@ -78,6 +78,7 @@ interface SocketContextType {
 
   // Exam & Questions Management
   exams: Exam[];
+  isLoadingExamData: boolean;
   dataApiError: string | null;
   retryExamData: () => void;
     createExam: (data: Partial<Exam> & { access_password?: string }) => Promise<Exam>;
@@ -142,9 +143,14 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     }
   });
   const [storageReady, setStorageReady] = useState(false);
+  const [isLoadingExamData, setIsLoadingExamData] = useState(true);
   const [dataApiError, setDataApiError] = useState<string | null>(null);
   const [examDataRetryCount, setExamDataRetryCount] = useState(0);
   const nextSubmissionId = useRef(500 + MOCK_SUBMISSIONS.length + 1);
+  const retryExamData = useCallback(() => {
+    setIsLoadingExamData(true);
+    setExamDataRetryCount((count) => count + 1);
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -208,10 +214,12 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!token) {
       setDataApiError(null);
+      setIsLoadingExamData(false);
       return;
     }
 
     let cancelled = false;
+    setIsLoadingExamData(true);
     setDataApiError(null);
     setExams([]);
     setQuestions({});
@@ -247,6 +255,8 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
             ? error.message
             : "Could not load exam data from the backend. Retry when the server is available."
         );
+      } finally {
+        if (!cancelled) setIsLoadingExamData(false);
       }
     })();
 
@@ -508,6 +518,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
           addLog("EVENT", "Exam Manager", `Created new examination #${created.id}: "${created.title}" (Status: ${created.status.toUpperCase()})`);
           return created;
         }
+        throw new Error("Could not save the exam to the backend. Please try again.");
       }
 
       setExams((prev) => [newExam, ...prev]);
@@ -659,6 +670,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
           addLog("EVENT", "Question Manager", `Added Question #${created.id} ("${created.title}") to Exam #${examId}`);
           return created;
         }
+        throw new Error("Could not save the question to the backend. Please try again.");
       }
 
       setQuestions((prev) => ({
@@ -1136,8 +1148,9 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
         // Exam & Questions Management
         exams,
+        isLoadingExamData,
         dataApiError,
-        retryExamData: () => setExamDataRetryCount((count) => count + 1),
+        retryExamData,
         createExam,
         updateExam,
         setExamStatus,
@@ -1163,7 +1176,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
           <p>{dataApiError}</p>
           <button
             type="button"
-            onClick={() => setExamDataRetryCount((count) => count + 1)}
+            onClick={retryExamData}
             className="mt-2 font-bold underline"
           >
             Retry loading exam data

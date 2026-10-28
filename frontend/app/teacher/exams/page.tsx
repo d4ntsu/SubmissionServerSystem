@@ -36,6 +36,8 @@ export default function TeacherExamManagementPage() {
     setExamStatus,
     deleteExam,
     examVerifications,
+    isLoadingExamData,
+    dataApiError,
   } = useSocket();
   const [filter, setFilter] = useState<string>("all");
   const [verificationExamId, setVerificationExamId] = useState<number | null>(null);
@@ -68,6 +70,7 @@ export default function TeacherExamManagementPage() {
     if (filter === "all") return true;
     return e.status === filter;
   });
+  const examDataReady = !isLoadingExamData && !dataApiError;
 
   const openCreateModal = () => {
     setEditingExam(null);
@@ -91,7 +94,7 @@ export default function TeacherExamManagementPage() {
     setIsModalOpen(true);
   };
 
-  const handleSaveExam = (e: React.FormEvent) => {
+  const handleSaveExam = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formTitle.trim()) return;
 
@@ -105,24 +108,29 @@ export default function TeacherExamManagementPage() {
       ? formPassword.trim() || (hasExistingPassword ? undefined : "")
       : "";
 
-    if (editingExam) {
-      updateExam(editingExam.id, {
-        title: formTitle,
-        description: formDescription,
-        duration_minutes: Number(formDuration),
-        access_password: accessPassword,
-      });
-    } else {
-      createExam({
-        title: formTitle,
-        description: formDescription,
-        duration_minutes: Number(formDuration),
-        status: "draft",
-        access_password: accessPassword || undefined,
-      });
+    try {
+      if (editingExam) {
+        await updateExam(editingExam.id, {
+          title: formTitle,
+          description: formDescription,
+          duration_minutes: Number(formDuration),
+          access_password: accessPassword,
+        });
+      } else {
+        await createExam({
+          title: formTitle,
+          description: formDescription,
+          duration_minutes: Number(formDuration),
+          status: "draft",
+          access_password: accessPassword || undefined,
+        });
+      }
+      setIsModalOpen(false);
+    } catch (error) {
+      setFormError(
+        error instanceof Error ? error.message : "Could not save the exam. Please try again."
+      );
     }
-
-    setIsModalOpen(false);
   };
 
   return (
@@ -158,24 +166,26 @@ export default function TeacherExamManagementPage() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="p-3 bg-slate-50 rounded border border-slate-200 font-mono">
               <span className="text-[10px] text-slate-400 font-bold uppercase block">TOTAL EXAMS</span>
-              <span className="text-xl font-black text-slate-800">{exams.length}</span>
+              <span className="text-xl font-black text-slate-800">
+                {examDataReady ? exams.length : "—"}
+              </span>
             </div>
             <div className="p-3 bg-slate-50 rounded border border-slate-200 font-mono">
               <span className="text-[10px] text-slate-400 font-bold uppercase block">ACTIVE (LIVE)</span>
               <span className="text-xl font-black text-emerald-600">
-                {exams.filter((e) => e.status === "started").length}
+                {examDataReady ? exams.filter((e) => e.status === "started").length : "—"}
               </span>
             </div>
             <div className="p-3 bg-slate-50 rounded border border-slate-200 font-mono">
               <span className="text-[10px] text-slate-400 font-bold uppercase block">PUBLISHED</span>
               <span className="text-xl font-black text-blue-600">
-                {exams.filter((e) => e.status === "published").length}
+                {examDataReady ? exams.filter((e) => e.status === "published").length : "—"}
               </span>
             </div>
             <div className="p-3 bg-slate-50 rounded border border-slate-200 font-mono">
               <span className="text-[10px] text-slate-400 font-bold uppercase block">DRAFTS</span>
               <span className="text-xl font-black text-slate-500">
-                {exams.filter((e) => e.status === "draft").length}
+                {examDataReady ? exams.filter((e) => e.status === "draft").length : "—"}
               </span>
             </div>
           </div>
@@ -212,7 +222,52 @@ export default function TeacherExamManagementPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredExams.map((exam) => {
+                  {isLoadingExamData && (
+                    <tr>
+                      <td colSpan={6} className="py-10 px-4 text-center text-sm text-slate-500">
+                        Loading exams...
+                      </td>
+                    </tr>
+                  )}
+                  {!isLoadingExamData && dataApiError && (
+                    <tr>
+                      <td colSpan={6} className="py-10 px-4 text-center text-sm text-red-700">
+                        Exam data could not be loaded. Use the retry action to try again.
+                      </td>
+                    </tr>
+                  )}
+                  {!isLoadingExamData && !dataApiError && exams.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="py-10 px-4 text-center">
+                        <div className="space-y-3">
+                          <p className="text-sm font-semibold text-slate-700">
+                            There are no exams yet.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={openCreateModal}
+                            className="inline-flex items-center gap-2 px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs rounded shadow-xs transition-colors"
+                          >
+                            <Plus className="w-4 h-4" />
+                            Create your first exam
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  {!isLoadingExamData &&
+                    !dataApiError &&
+                    exams.length > 0 &&
+                    filteredExams.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="py-8 px-4 text-center text-sm text-slate-500">
+                          No exams match this filter.
+                        </td>
+                      </tr>
+                    )}
+                  {!isLoadingExamData &&
+                    !dataApiError &&
+                    filteredExams.map((exam) => {
                     const isDraft = exam.status === "draft";
                     const isPublished = exam.status === "published";
                     const isStarted = exam.status === "started";
@@ -377,7 +432,7 @@ export default function TeacherExamManagementPage() {
                         </td>
                       </tr>
                     );
-                  })}
+                    })}
                 </tbody>
               </table>
             </div>
@@ -530,4 +585,3 @@ export default function TeacherExamManagementPage() {
     </ProtectedRoute>
   );
 }
-

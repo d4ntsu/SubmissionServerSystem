@@ -16,6 +16,10 @@ import {
   AlertCircle,
 } from "lucide-react";
 
+function getLandingPage(role: UserRole): string {
+  return role === "teacher" ? "/teacher/exams" : "/dashboard";
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const {
@@ -34,13 +38,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (isSessionLoading || !user) return;
-
-    let target = user.role === "teacher" ? "/teacher/server/submissions" : "/dashboard";
-    const next = new URLSearchParams(window.location.search).get("next");
-    if (next && next.startsWith("/") && !next.startsWith("//")) {
-      target = next;
-    }
-    router.replace(target);
+    router.replace(getLandingPage(user.role));
   }, [isSessionLoading, user, router]);
 
   const handleRoleSelect = (role: UserRole) => {
@@ -59,6 +57,7 @@ export default function LoginPage() {
         loggedInUser.full_name,
         `Logged in to the exam portal as ${loggedInUser.role}`
       );
+      router.replace(getLandingPage(loggedInUser.role));
     } catch (err) {
       let message = err instanceof Error ? err.message : "Login failed. Please try again.";
       if (err instanceof ApiError && err.status === 401) {

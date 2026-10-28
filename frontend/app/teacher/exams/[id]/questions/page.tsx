@@ -48,11 +48,14 @@ export default function TeacherQuestionsManagementPage() {
     createTestCase,
     deleteTestCase,
     examVerifications,
+    isLoadingExamData,
+    dataApiError,
   } = useSocket();
 
-  const exam = exams.find((e) => e.id === examId) || exams[0];
+  const exam = exams.find((e) => e.id === examId);
   const examQuestions = questions[examId] || [];
   const [verificationOpen, setVerificationOpen] = useState(false);
+  const [questionFormError, setQuestionFormError] = useState("");
 
   const startExam = () => {
     if (!exam) return;
@@ -99,6 +102,7 @@ export default function TeacherQuestionsManagementPage() {
 
   const openAddQuestion = () => {
     setEditingQuestion(null);
+    setQuestionFormError("");
     setQTitle(`Problem ${examQuestions.length + 1}: `);
     setQDesc("");
     setQPoints(30);
@@ -116,6 +120,7 @@ export default function TeacherQuestionsManagementPage() {
 
   const openEditQuestion = (q: Question) => {
     setEditingQuestion(q);
+    setQuestionFormError("");
     setQTitle(q.title);
     setQDesc(q.description);
     setQPoints(q.points);
@@ -131,43 +136,48 @@ export default function TeacherQuestionsManagementPage() {
     setIsQuestionModalOpen(true);
   };
 
-  const handleSaveQuestion = (e: React.FormEvent) => {
+  const handleSaveQuestion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!qTitle.trim()) return;
 
-    if (editingQuestion) {
-      updateQuestion(examId, editingQuestion.id, {
-        title: qTitle,
-        description: qDesc,
-        points: Number(qPoints),
-        question_type: qType,
-        language: qType === "JAVA_CLASS_METHOD" ? "java" : qLanguage,
-        time_limit: Number(qTimeLimit),
-        show_result_to_student: qShowResult,
-        class_name: qType === "JAVA_CLASS_METHOD" ? qClassName : null,
-        method_name: qType === "JAVA_CLASS_METHOD" ? qMethodName : null,
-        method_mode: qType === "JAVA_CLASS_METHOD" ? qMethodMode : null,
-        return_type: qType === "JAVA_CLASS_METHOD" ? qReturnType : null,
-        parameter_types: qType === "JAVA_CLASS_METHOD" ? qParamTypes : null,
-      });
-    } else {
-      createQuestion(examId, {
-        title: qTitle,
-        description: qDesc,
-        points: Number(qPoints),
-        question_type: qType,
-        language: qType === "JAVA_CLASS_METHOD" ? "java" : qLanguage,
-        time_limit: Number(qTimeLimit),
-        show_result_to_student: qShowResult,
-        class_name: qType === "JAVA_CLASS_METHOD" ? qClassName : null,
-        method_name: qType === "JAVA_CLASS_METHOD" ? qMethodName : null,
-        method_mode: qType === "JAVA_CLASS_METHOD" ? qMethodMode : null,
-        return_type: qType === "JAVA_CLASS_METHOD" ? qReturnType : null,
-        parameter_types: qType === "JAVA_CLASS_METHOD" ? qParamTypes : null,
-      });
+    try {
+      if (editingQuestion) {
+        updateQuestion(examId, editingQuestion.id, {
+          title: qTitle,
+          description: qDesc,
+          points: Number(qPoints),
+          question_type: qType,
+          language: qType === "JAVA_CLASS_METHOD" ? "java" : qLanguage,
+          time_limit: Number(qTimeLimit),
+          show_result_to_student: qShowResult,
+          class_name: qType === "JAVA_CLASS_METHOD" ? qClassName : null,
+          method_name: qType === "JAVA_CLASS_METHOD" ? qMethodName : null,
+          method_mode: qType === "JAVA_CLASS_METHOD" ? qMethodMode : null,
+          return_type: qType === "JAVA_CLASS_METHOD" ? qReturnType : null,
+          parameter_types: qType === "JAVA_CLASS_METHOD" ? qParamTypes : null,
+        });
+      } else {
+        await createQuestion(examId, {
+          title: qTitle,
+          description: qDesc,
+          points: Number(qPoints),
+          question_type: qType,
+          language: qType === "JAVA_CLASS_METHOD" ? "java" : qLanguage,
+          time_limit: Number(qTimeLimit),
+          show_result_to_student: qShowResult,
+          class_name: qType === "JAVA_CLASS_METHOD" ? qClassName : null,
+          method_name: qType === "JAVA_CLASS_METHOD" ? qMethodName : null,
+          method_mode: qType === "JAVA_CLASS_METHOD" ? qMethodMode : null,
+          return_type: qType === "JAVA_CLASS_METHOD" ? qReturnType : null,
+          parameter_types: qType === "JAVA_CLASS_METHOD" ? qParamTypes : null,
+        });
+      }
+      setIsQuestionModalOpen(false);
+    } catch (error) {
+      setQuestionFormError(
+        error instanceof Error ? error.message : "Could not save the question. Please try again."
+      );
     }
-
-    setIsQuestionModalOpen(false);
   };
 
   const openAddTestCase = (questionId: number) => {
@@ -320,19 +330,34 @@ export default function TeacherQuestionsManagementPage() {
                 </button>
               )}
 
-              <button
-                onClick={openAddQuestion}
-                className="px-4 py-2 bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white font-bold text-xs rounded shadow-xs transition-colors flex items-center gap-1.5"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Add New Question</span>
-              </button>
+              {exam && (
+                <button
+                  onClick={openAddQuestion}
+                  className="px-4 py-2 bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white font-bold text-xs rounded shadow-xs transition-colors flex items-center gap-1.5"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add New Question</span>
+                </button>
+              )}
             </div>
           </div>
 
           {/* Questions List */}
           <div className="space-y-6">
-            {examQuestions.length === 0 ? (
+            {isLoadingExamData ? (
+              <p className="py-10 text-center text-sm text-slate-500">Loading exam questions...</p>
+            ) : dataApiError ? (
+              <p className="py-10 text-center text-sm text-red-700">
+                Exam questions could not be loaded. Use the retry action to try again.
+              </p>
+            ) : !exam ? (
+              <div className="text-center py-10 border border-slate-200 rounded-lg space-y-3">
+                <p className="text-sm font-semibold text-slate-700">This exam could not be found.</p>
+                <Link href="/teacher/exams" className="text-sm font-semibold text-orange-600 hover:text-orange-700">
+                  Return to exam management
+                </Link>
+              </div>
+            ) : examQuestions.length === 0 ? (
               <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-lg space-y-3">
                 <FileCode2 className="w-10 h-10 text-slate-300 mx-auto" />
                 <h3 className="text-sm font-bold text-slate-700">No Questions Configured Yet</h3>
@@ -562,6 +587,11 @@ export default function TeacherQuestionsManagementPage() {
               </div>
 
               <form onSubmit={handleSaveQuestion} className="flex-1 overflow-y-auto p-5 space-y-4 text-xs font-sans">
+                {questionFormError && (
+                  <p role="alert" className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                    {questionFormError}
+                  </p>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="sm:col-span-2">
                     <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
@@ -961,4 +991,3 @@ export default function TeacherQuestionsManagementPage() {
     </ProtectedRoute>
   );
 }
-
