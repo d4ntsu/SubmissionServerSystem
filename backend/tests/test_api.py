@@ -55,6 +55,69 @@ class TestExamEndpoints:
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
 
+    def test_student_exam_list_hides_automated_test_accounts_but_teacher_list_does_not(
+        self, client, teacher_token, student_token
+    ):
+        test_exam = client.post(
+            "/exams",
+            json={"title": "Automated test exam"},
+            headers={"Authorization": f"Bearer {teacher_token}"},
+        )
+        assert test_exam.status_code == 201
+        test_exam_id = test_exam.json()["id"]
+        client.put(
+            f"/exams/{test_exam_id}",
+            json={"status": "started"},
+            headers={"Authorization": f"Bearer {teacher_token}"},
+        )
+
+        teacher_resp = client.post(
+            "/auth/register",
+            json={
+                "username": "classroom_instructor",
+                "password": "teacher123",
+                "full_name": "Classroom Instructor",
+                "role": "teacher",
+            },
+        )
+        assert teacher_resp.status_code in (201, 400)
+        instructor_login = client.post(
+            "/auth/login",
+            json={"username": "classroom_instructor", "password": "teacher123"},
+        )
+        assert instructor_login.status_code == 200
+        instructor_headers = {
+            "Authorization": f"Bearer {instructor_login.json()['access_token']}"
+        }
+        real_exam = client.post(
+            "/exams",
+            json={"title": "Classroom exam"},
+            headers=instructor_headers,
+        )
+        assert real_exam.status_code == 201
+        real_exam_id = real_exam.json()["id"]
+        client.put(
+            f"/exams/{real_exam_id}",
+            json={"status": "started"},
+            headers=instructor_headers,
+        )
+
+        student_resp = client.get(
+            "/exams",
+            headers={"Authorization": f"Bearer {student_token}"},
+        )
+        assert student_resp.status_code == 200
+        student_exam_ids = {exam["id"] for exam in student_resp.json()}
+        assert real_exam_id in student_exam_ids
+        assert test_exam_id not in student_exam_ids
+
+        test_teacher_resp = client.get(
+            "/exams",
+            headers={"Authorization": f"Bearer {teacher_token}"},
+        )
+        assert test_teacher_resp.status_code == 200
+        assert test_exam_id in {exam["id"] for exam in test_teacher_resp.json()}
+
     def test_get_exam_404(self, client, teacher_token):
         resp = client.get("/exams/9999", headers={"Authorization": f"Bearer {teacher_token}"})
         assert resp.status_code == 404

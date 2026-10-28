@@ -18,8 +18,8 @@ import {
 } from "lucide-react";
 
 export default function ExamsListPage() {
-  const { isTeacher } = useAuth();
-  const { exams } = useSocket();
+  const { isTeacher, isStudent } = useAuth();
+  const { exams, dataApiError, isExamDataLoaded, retryExamData } = useSocket();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
@@ -48,6 +48,32 @@ export default function ExamsListPage() {
       statusFilter === "all" ? true : exam.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
+
+  if ((isStudent || isTeacher) && (!isExamDataLoaded || dataApiError)) {
+    return (
+      <ProtectedRoute>
+        <AppLayout>
+          <div className="bg-white rounded-lg border border-slate-200 p-8 text-center space-y-3">
+            {dataApiError ? (
+              <>
+                <p className="text-sm font-bold text-slate-800">Could not load exams</p>
+                <p className="text-xs text-slate-500">{dataApiError}</p>
+                <button
+                  type="button"
+                  onClick={retryExamData}
+                  className="px-4 py-2 rounded bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold"
+                >
+                  Retry
+                </button>
+              </>
+            ) : (
+              <p className="text-sm text-slate-500">Loading exams...</p>
+            )}
+          </div>
+        </AppLayout>
+      </ProtectedRoute>
+    );
+  }
 
   return (
     <ProtectedRoute>
@@ -180,4 +206,3 @@ export default function ExamsListPage() {
     </ProtectedRoute>
   );
 }
-

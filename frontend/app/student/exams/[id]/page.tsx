@@ -13,7 +13,7 @@ import { QuestionSidebar } from "@/components/exam/QuestionSidebar";
 import { SubmitReviewModal } from "@/components/exam/SubmitReviewModal";
 import { useAuth } from "@/lib/auth-context";
 import { useSocket } from "@/lib/socket-context";
-import { MOCK_QUESTIONS, MOCK_TEST_CASES } from "@/lib/api";
+import { MOCK_QUESTIONS } from "@/lib/api";
 import { gradeSampleTests, hasAnswer } from "@/lib/grading";
 import { Question, TestCase } from "@/types";
 import {
@@ -60,6 +60,9 @@ export default function ExamWorkspacePage() {
     exams,
     questions: allQuestions,
     testCases: allTestCases,
+    dataApiError,
+    isExamDataLoaded,
+    retryExamData,
     addLog,
     hasExamPassword,
     verifyExamPassword,
@@ -94,11 +97,15 @@ export default function ExamWorkspacePage() {
   }, [routeExamId]);
 
   const exam = exams.find((item) => item.id === selectedExamId);
-  const questions = allQuestions[selectedExamId] || MOCK_QUESTIONS[selectedExamId] || [];
+  const questions =
+    allQuestions[selectedExamId] || (isTeacher ? MOCK_QUESTIONS[selectedExamId] : undefined) || [];
 
   const currentQuestion = questions[currentQIndex] || questions[0];
   const currentCode = currentQuestion ? answers[currentQuestion.id] || "" : "";
-  const questionTestCases = currentQuestion ? allTestCases[currentQuestion.id] || [] : [];
+  const questionTestCases =
+    currentQuestion && (!isStudent || isExamDataLoaded)
+      ? allTestCases[currentQuestion.id] || []
+      : [];
 
   useEffect(() => {
     if (!exam) return;
@@ -359,6 +366,33 @@ export default function ExamWorkspacePage() {
     });
     setBroadcastMessage("");
   };
+
+  if (isStudent && (!isExamDataLoaded || dataApiError)) {
+    return (
+      <ProtectedRoute>
+        <AppLayout hideNavbar>
+          <div className="bg-white rounded-lg border border-slate-200 p-8 text-center space-y-3">
+            {dataApiError ? (
+              <>
+                <FileWarning className="w-8 h-8 text-amber-500 mx-auto" />
+                <h1 className="text-sm font-bold text-slate-800">Could not load exam data</h1>
+                <p className="text-xs text-slate-500">{dataApiError}</p>
+                <button
+                  type="button"
+                  onClick={retryExamData}
+                  className="px-4 py-2 rounded bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold"
+                >
+                  Retry
+                </button>
+              </>
+            ) : (
+              <p className="text-sm text-slate-500">Loading exam questions and sample tests...</p>
+            )}
+          </div>
+        </AppLayout>
+      </ProtectedRoute>
+    );
+  }
 
   if (!exam) {
     return (

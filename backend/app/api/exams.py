@@ -23,6 +23,19 @@ from app.services.dependencies import get_current_user, require_role
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/exams", tags=["exams"])
 
+_AUTOMATED_TEST_TEACHER_USERNAMES = {
+    "test_teacher",
+    "exam_pw_teacher",
+    "exam_open_teacher",
+    "regrade_teacher",
+    "regrade_other_teacher",
+    "sub_teacher",
+    "lang_teacher",
+    "view_teacher",
+    "priv_teacher",
+}
+_AUTOMATED_TEST_TEACHER_PREFIXES = ("rt_teacher_", "tcp_route_teacher_")
+
 
 def _get_exam_or_404(db: Session, exam_id: int) -> Exam:
     exam = db.get(Exam, exam_id)
@@ -100,7 +113,15 @@ def list_exams(
 ):
     if current_user.role == UserRole.teacher:
         return db.query(Exam).filter(Exam.teacher_id == current_user.id).all()
-    return db.query(Exam).filter(Exam.status.in_([ExamStatus.published, ExamStatus.started])).all()
+    query = (
+        db.query(Exam)
+        .join(User, Exam.teacher_id == User.id)
+        .filter(Exam.status.in_([ExamStatus.published, ExamStatus.started]))
+        .filter(~User.username.in_(_AUTOMATED_TEST_TEACHER_USERNAMES))
+    )
+    for prefix in _AUTOMATED_TEST_TEACHER_PREFIXES:
+        query = query.filter(~User.username.startswith(prefix))
+    return query.all()
 
 
 @router.get("/{exam_id}", response_model=ExamResponse)

@@ -146,45 +146,6 @@ export async function fetchCurrentUser(token: string): Promise<User> {
   }
 }
 
-export const MOCK_EXAMS: Exam[] = [
-  {
-    id: 1,
-    title: "CS201: Data Structures & Java Algorithms Final",
-    description: "Official 90-minute midterm programming exam. Implements Java Array and Class Methods with strict constraints.",
-    teacher_id: 1,
-    start_time: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-    end_time: new Date(Date.now() + 1000 * 60 * 60).toISOString(),
-    duration_minutes: 90,
-    status: "started",
-    questions_count: 3,
-    total_points: 100,
-  },
-  {
-    id: 2,
-    title: "CS102: Object-Oriented Programming Lab 4",
-    description: "Standard input/output and Object methods evaluation on string manipulation and array sorting.",
-    teacher_id: 1,
-    start_time: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(),
-    end_time: new Date(Date.now() + 1000 * 60 * 60 * 26).toISOString(),
-    duration_minutes: 120,
-    status: "published",
-    questions_count: 2,
-    total_points: 100,
-  },
-  {
-    id: 3,
-    title: "CS101: Introduction to Programming Practice",
-    description: "Archived practice session with solved standard test cases.",
-    teacher_id: 1,
-    start_time: new Date(Date.now() - 1000 * 60 * 60 * 48).toISOString(),
-    end_time: new Date(Date.now() - 1000 * 60 * 60 * 46).toISOString(),
-    duration_minutes: 60,
-    status: "ended",
-    questions_count: 2,
-    total_points: 50,
-  },
-];
-
 export const MOCK_QUESTIONS: Record<number, Question[]> = {
   1: [
     {

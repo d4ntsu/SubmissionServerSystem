@@ -16,7 +16,6 @@ import {
   MOCK_STUDENTS_STATUS,
   MOCK_EVENT_LOGS,
   MOCK_SUBMISSIONS,
-  MOCK_EXAMS,
   MOCK_QUESTIONS,
   MOCK_TEST_CASES,
   createExamRequest,
@@ -80,6 +79,7 @@ interface SocketContextType {
   // Exam & Questions Management
   exams: Exam[];
   dataApiError: string | null;
+  isExamDataLoaded: boolean;
   retryExamData: () => void;
     createExam: (data: Partial<Exam> & { access_password?: string }) => Promise<Exam>;
     updateExam: (id: number, data: Partial<Exam> & { access_password?: string | null }) => Promise<void>;
@@ -100,7 +100,6 @@ interface SocketContextType {
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
 
 const STORAGE_KEYS = {
-  exams: "lan_exam_exams_v1",
   questions: "lan_exam_questions_v1",
   testCases: "lan_exam_test_cases_v1",
   submissions: "lan_exam_submissions_v1",
@@ -128,7 +127,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   const [submissions, setSubmissions] = useState<Submission[]>(MOCK_SUBMISSIONS);
 
   // Exam, Questions, and Test Cases Management State
-  const [exams, setExams] = useState<Exam[]>(MOCK_EXAMS);
+  const [exams, setExams] = useState<Exam[]>([]);
   const [questions, setQuestions] = useState<Record<number, Question[]>>(MOCK_QUESTIONS);
   const [testCases, setTestCases] = useState<Record<number, TestCase[]>>(MOCK_TEST_CASES);
   const [examVerifications, setExamVerifications] = useState<
@@ -144,17 +143,14 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   });
   const [storageReady, setStorageReady] = useState(false);
   const [dataApiError, setDataApiError] = useState<string | null>(null);
+  const [isExamDataLoaded, setIsExamDataLoaded] = useState(false);
   const [examDataRetryCount, setExamDataRetryCount] = useState(0);
   const nextSubmissionId = useRef(500 + MOCK_SUBMISSIONS.length + 1);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      const storedExams = window.localStorage.getItem(STORAGE_KEYS.exams);
-      if (storedExams) {
-        const parsed = JSON.parse(storedExams);
-        if (Array.isArray(parsed)) setExams(parsed);
-      }
+      window.localStorage.removeItem("lan_exam_exams_v1");
       const storedQuestions = window.localStorage.getItem(STORAGE_KEYS.questions);
       if (storedQuestions) {
         const parsed = JSON.parse(storedQuestions);
@@ -209,11 +205,13 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!token) {
       setDataApiError(null);
+      setIsExamDataLoaded(false);
       return;
     }
 
     let cancelled = false;
     setDataApiError(null);
+    setIsExamDataLoaded(false);
     setExams([]);
     setQuestions({});
     setTestCases({});
@@ -241,6 +239,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
           setExams(realExams);
           setQuestions(qByExam);
           setTestCases(tcByQ);
+          setIsExamDataLoaded(true);
         }
       } catch (error) {
         if (cancelled) return;
@@ -252,6 +251,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
             ? error.message
             : "Could not load exam data from the backend. Retry when the server is available."
         );
+        setIsExamDataLoaded(true);
         if (error instanceof ApiError && error.status === 401) {
           logout("Your session was rejected by the backend. Please sign in again.");
         }
@@ -262,11 +262,6 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
     };
   }, [token, examDataRetryCount, logout]);
-
-  useEffect(() => {
-    if (!storageReady || typeof window === "undefined") return;
-    window.localStorage.setItem(STORAGE_KEYS.exams, JSON.stringify(exams));
-  }, [exams, storageReady]);
 
   useEffect(() => {
     if (!storageReady || typeof window === "undefined") return;
@@ -1308,6 +1303,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
         // Exam & Questions Management
         exams,
         dataApiError,
+        isExamDataLoaded,
         retryExamData: () => setExamDataRetryCount((count) => count + 1),
         createExam,
         updateExam,

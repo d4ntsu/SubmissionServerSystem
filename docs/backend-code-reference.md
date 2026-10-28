@@ -210,7 +210,7 @@ Decodes and validates a JWT token. Returns the payload dict on success, `None` i
 **POST /exams** — creates a new exam. Only teachers can call this. The exam starts in `draft` status. Returns 201.
 
 ### `list_exams(current_user, db) -> list[ExamResponse]`
-**GET /exams** — lists exams. Teachers see only their own exams; students see only `published` and `started` exams.
+**GET /exams** — lists exams. Teachers see only their own exams. Students see `published` and `started` exams except those owned by the known automated-test accounts, which are kept out of student listings without changing teacher exam management.
 
 ### `get_exam(exam_id, current_user, db) -> ExamResponse`
 **GET /exams/{exam_id}** — returns a single exam by ID. Accessible to any authenticated user.

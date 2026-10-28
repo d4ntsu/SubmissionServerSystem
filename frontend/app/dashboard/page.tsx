@@ -20,8 +20,8 @@ import {
 } from "lucide-react";
 
 export default function ExamDashboardPage() {
-  const { user, isTeacher } = useAuth();
-  const { exams } = useSocket();
+  const { user, isTeacher, isStudent } = useAuth();
+  const { exams, dataApiError, isExamDataLoaded, retryExamData } = useSocket();
 
   const launchExamWindow = (examId: number) => {
     const width = 1280;
@@ -48,6 +48,32 @@ export default function ExamDashboardPage() {
   const activeExams = exams.filter((e) => e.status === "started");
   const upcomingExams = exams.filter((e) => e.status === "published");
   const completedExams = exams.filter((e) => e.status === "ended");
+
+  if ((isStudent || isTeacher) && (!isExamDataLoaded || dataApiError)) {
+    return (
+      <ProtectedRoute>
+        <AppLayout>
+          <div className="bg-white rounded-lg border border-slate-200 p-8 text-center space-y-3">
+            {dataApiError ? (
+              <>
+                <p className="text-sm font-bold text-slate-800">Could not load exams</p>
+                <p className="text-xs text-slate-500">{dataApiError}</p>
+                <button
+                  type="button"
+                  onClick={retryExamData}
+                  className="px-4 py-2 rounded bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold"
+                >
+                  Retry
+                </button>
+              </>
+            ) : (
+              <p className="text-sm text-slate-500">Loading exams...</p>
+            )}
+          </div>
+        </AppLayout>
+      </ProtectedRoute>
+    );
+  }
 
   return (
     <ProtectedRoute>
@@ -215,7 +241,11 @@ export default function ExamDashboardPage() {
                             Lab Assessment
                           </span>
                           <span className="text-xs text-slate-400 font-mono">
-                            Scheduled: Tomorrow 09:00 AM
+                            Scheduled:{" "}
+                            {new Date(exam.start_time).toLocaleString([], {
+                              dateStyle: "medium",
+                              timeStyle: "short",
+                            })}
                           </span>
                         </div>
                         <h3 className="text-sm font-bold text-slate-900">
