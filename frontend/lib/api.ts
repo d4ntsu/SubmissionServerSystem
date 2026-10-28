@@ -1,4 +1,4 @@
-import { Exam, Question, TestCase, Submission, User, UserRole, Announcement, StudentClientStatus, RealtimeEventLog } from "@/types";
+import { Exam, Question, TestCase, Submission, User, UserRole, Announcement } from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -476,114 +476,9 @@ export const MOCK_ANNOUNCEMENTS: Announcement[] = [
   },
 ];
 
-export const MOCK_STUDENTS_STATUS: StudentClientStatus[] = [
-  {
-    student_id: 101,
-    student_name: "John Doe",
-    username: "student_john",
-    client_ip: "192.168.1.101",
-    status: "in_exam",
-    current_exam: "CS201 Final",
-    current_question: "Problem 2: Calculator",
-    submissions_count: 1,
-    warning_count: 0,
-  },
-  {
-    student_id: 102,
-    student_name: "Alice Smith",
-    username: "alice_s",
-    client_ip: "192.168.1.102",
-    status: "submitted",
-    current_exam: "CS201 Final",
-    current_question: "Reviewing Problem 3",
-    submissions_count: 2,
-    warning_count: 0,
-  },
-  {
-    student_id: 103,
-    student_name: "Bob Martin",
-    username: "bob_m",
-    client_ip: "192.168.1.103",
-    status: "in_exam",
-    current_exam: "CS201 Final",
-    current_question: "Problem 1: Reverse Words",
-    submissions_count: 1,
-    warning_count: 1,
-  },
-  {
-    student_id: 104,
-    student_name: "Emily Watson",
-    username: "emily_w",
-    client_ip: "192.168.1.104",
-    status: "in_exam",
-    current_exam: "CS201 Final",
-    current_question: "Problem 2: Calculator",
-    submissions_count: 1,
-    warning_count: 0,
-  },
-  {
-    student_id: 105,
-    student_name: "David Kim",
-    username: "david_k",
-    client_ip: "192.168.1.105",
-    status: "in_exam",
-    current_exam: "CS201 Final",
-    current_question: "Problem 1: Reverse Words",
-    submissions_count: 0,
-    warning_count: 0,
-  },
-  {
-    student_id: 106,
-    student_name: "Sarah Connor",
-    username: "sarah_c",
-    client_ip: "192.168.1.106",
-    status: "disconnected",
-    current_exam: "CS201 Final",
-    current_question: "Disconnected",
-    submissions_count: 0,
-    warning_count: 2,
-  },
-];
 
-export const MOCK_EVENT_LOGS: RealtimeEventLog[] = [
-  {
-    id: "log-1",
-    timestamp: new Date(Date.now() - 1000 * 12).toISOString(),
-    level: "SUBMISSION",
-    source: "FastAPI /submit",
-    message: "Student David Kim (192.168.1.105) submitted Java solution for Q101 (Reverse Words)",
-    details: { submission_id: 505, language: "java", bytes: 642 },
-  },
-  {
-    id: "log-2",
-    timestamp: new Date(Date.now() - 1000 * 25).toISOString(),
-    level: "EVENT",
-    source: "Student Portal",
-    message: "Emily Watson (192.168.1.104) started the test \"CS201 Final\" and opened Problem 2",
-  },
-  {
-    id: "log-3",
-    timestamp: new Date(Date.now() - 1000 * 60).toISOString(),
-    level: "EVENT",
-    source: "RealtimeBridge",
-    message: "Teacher broadcasted announcement 'Clarification on Problem 2' to 5 active clients",
-  },
-  {
-    id: "log-4",
-    timestamp: new Date(Date.now() - 1000 * 140).toISOString(),
-    level: "EVENT",
-    source: "Exam Lifecycle",
-    message: "Teacher ended test \"CS201 Final\". Student sessions closed and submissions locked",
-  },
-  {
-    id: "log-5",
-    timestamp: new Date(Date.now() - 1000 * 240).toISOString(),
-    level: "SUBMISSION",
-    source: "Piston Grader",
-    message: "Grading finished for submission #502 (Alice Smith). Score: 40/40. Status: COMPLETED",
-    details: { passed_cases: 3, total_cases: 3, execution_time: 0.15 },
-  },
-];
+
+
 
 // Helper to interact with API or fallback
 export async function fetchExams(token?: string): Promise<Exam[]> {

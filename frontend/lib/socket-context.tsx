@@ -13,8 +13,6 @@ import {
 } from "@/types";
 import {
   MOCK_ANNOUNCEMENTS,
-  MOCK_STUDENTS_STATUS,
-  MOCK_EVENT_LOGS,
   MOCK_SUBMISSIONS,
   MOCK_EXAMS,
   MOCK_QUESTIONS,
@@ -82,7 +80,7 @@ const STORAGE_KEYS = {
   testCases: "lan_exam_test_cases_v1",
   submissions: "lan_exam_submissions_v1",
   verifications: "lan_exam_verifications_v1",
-  eventLogs: "lan_exam_event_logs_v1",
+  eventLogs: "lan_exam_event_logs_v2",
 };
 
 export function SocketProvider({ children }: { children: React.ReactNode }) {
@@ -99,8 +97,8 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     },
   ]);
-  const [studentsStatus, setStudentsStatus] = useState<StudentClientStatus[]>(MOCK_STUDENTS_STATUS);
-  const [eventLogs, setEventLogs] = useState<RealtimeEventLog[]>(MOCK_EVENT_LOGS);
+  const [studentsStatus, setStudentsStatus] = useState<StudentClientStatus[]>([]);
+  const [eventLogs, setEventLogs] = useState<RealtimeEventLog[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>(MOCK_SUBMISSIONS);
 
   // Exam, Questions, and Test Cases Management State
@@ -167,11 +165,6 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       if (storedLogs) {
         const parsed = JSON.parse(storedLogs);
         if (Array.isArray(parsed)) setEventLogs(parsed);
-      } else {
-        window.localStorage.setItem(
-          STORAGE_KEYS.eventLogs,
-          JSON.stringify(MOCK_EVENT_LOGS)
-        );
       }
     } catch {
       // Fall back to the bundled demo data when storage is corrupted.
