@@ -7,6 +7,7 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { MarkdownRenderer } from "@/components/markdown/MarkdownRenderer";
 import { ExamVerificationModal } from "@/components/exam/ExamVerificationModal";
+import { ExamWorkspaceTabs } from "@/components/exam/ExamWorkspaceTabs";
 import { useSocket } from "@/lib/socket-context";
 import { CodingLanguage, Question, TestCase, QuestionType, ExamStatus } from "@/types";
 import {
@@ -256,6 +257,8 @@ export default function TeacherQuestionsManagementPage() {
             <li className="text-orange-600 font-bold font-mono">Questions & Test Cases</li>
           </ol>
         </nav>
+
+        <ExamWorkspaceTabs examId={examId} active="questions" />
 
         {/* Centralized Boxed Container */}
         <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">

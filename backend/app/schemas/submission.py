@@ -14,7 +14,12 @@ class SubmissionCreate(BaseModel):
 class SubmissionResponse(BaseModel):
     id: int
     student_id: int
+    student_name: str | None = None
+    student_username: str | None = None
     question_id: int
+    question_title: str | None = None
+    exam_id: int | None = None
+    exam_title: str | None = None
     language: str
     source_code: str
     status: SubmissionStatus

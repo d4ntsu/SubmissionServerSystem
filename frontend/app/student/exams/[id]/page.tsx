@@ -11,14 +11,16 @@ import { ExamWindowGuard } from "@/components/exam/ExamWindowGuard";
 import { ExamVerificationModal } from "@/components/exam/ExamVerificationModal";
 import { QuestionSidebar } from "@/components/exam/QuestionSidebar";
 import { SubmitReviewModal } from "@/components/exam/SubmitReviewModal";
+import { ExamGradeResultPanel } from "@/components/exam/ExamGradeResultPanel";
 import { useAuth } from "@/lib/auth-context";
 import { useSocket } from "@/lib/socket-context";
-import { MOCK_QUESTIONS } from "@/lib/api";
+import { gradeExamRequest, MOCK_QUESTIONS } from "@/lib/api";
 import { gradeSampleTests, hasAnswer } from "@/lib/grading";
-import { Question, TestCase } from "@/types";
+import { ExamGradeResult, Question, TestCase } from "@/types";
 import {
   AlertTriangle,
   CheckCircle,
+  ClipboardCheck,
   Clock,
   Code2,
   ExternalLink,
@@ -52,7 +54,7 @@ export default function ExamWorkspacePage() {
   const params = useParams();
   const router = useRouter();
   const routeExamId = Number(params?.id) || 1;
-  const { user, isTeacher, isStudent } = useAuth();
+  const { user, token, isTeacher, isStudent } = useAuth();
   const {
     submitCode,
     announcements,
@@ -79,6 +81,9 @@ export default function ExamWorkspacePage() {
   const [submitted, setSubmitted] = useState(false);
   const [submittedCount, setSubmittedCount] = useState(0);
   const [submitError, setSubmitError] = useState("");
+  const [isGrading, setIsGrading] = useState(false);
+  const [gradeResult, setGradeResult] = useState<ExamGradeResult | null>(null);
+  const [gradeError, setGradeError] = useState("");
   const [accessGranted, setAccessGranted] = useState(false);
   const [isRunningSample, setIsRunningSample] = useState(false);
   const [consoleOutput, setConsoleOutput] = useState<string | null>(null);
@@ -94,6 +99,8 @@ export default function ExamWorkspacePage() {
 
   useEffect(() => {
     setSelectedExamId(routeExamId);
+    setGradeResult(null);
+    setGradeError("");
   }, [routeExamId]);
 
   const exam = exams.find((item) => item.id === selectedExamId);
@@ -207,6 +214,8 @@ export default function ExamWorkspacePage() {
     setSubmitted(false);
     setSubmittedCount(0);
     setSubmitError("");
+    setGradeResult(null);
+    setGradeError("");
     setReviewOpen(false);
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", `/student/exams/${id}`);
@@ -312,7 +321,42 @@ export default function ExamWorkspacePage() {
     setConsoleStatus("idle");
   };
 
+  const handleGradeExam = async () => {
+    if (!exam || !questions.length) return;
+    setIsGrading(true);
+    setGradeError("");
+    setGradeResult(null);
+
+    try {
+      const result = await gradeExamRequest(
+        exam.id,
+        questions.map((question) => ({
+          question_id: question.id,
+          language: question.language,
+          source_code: answers[question.id] ?? templateFor(question),
+        })),
+        token ?? undefined
+      );
+      setGradeResult(result);
+      addLog(
+        "SUBMISSION",
+        "Teacher Preview",
+        `Graded test "${exam.title}" through the backend (${result.score}/${result.max_score}, ${result.status})`
+      );
+    } catch (error) {
+      console.error(error);
+      setGradeError(
+        error instanceof Error
+          ? error.message
+          : "The exam could not be graded. Please try again."
+      );
+    } finally {
+      setIsGrading(false);
+    }
+  };
+
   const handleConfirmSubmit = async () => {
+    if (isTeacher) return;
     if (!user || !exam) return;
     setIsSubmittingExam(true);
     setSubmitError("");
@@ -668,15 +712,33 @@ export default function ExamWorkspacePage() {
 
             <button
               type="button"
-              onClick={() => setReviewOpen(true)}
-              disabled={isSubmittingExam}
+              onClick={isTeacher ? handleGradeExam : () => setReviewOpen(true)}
+              disabled={isTeacher ? isGrading : isSubmittingExam}
               className="px-5 py-2 rounded bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white text-xs font-bold shadow-sm transition-all flex items-center gap-2 disabled:opacity-50"
             >
-              <Send className="w-3.5 h-3.5" />
-              <span>Submit Test</span>
+              {isTeacher ? (
+                <ClipboardCheck className="w-3.5 h-3.5" />
+              ) : (
+                <Send className="w-3.5 h-3.5" />
+              )}
+              <span>
+                {isTeacher
+                  ? isGrading
+                    ? "Grading..."
+                    : "Grade Exam"
+                  : "Submit Test"}
+              </span>
             </button>
           </div>
         </div>
+
+        {isTeacher && (
+          <ExamGradeResultPanel
+            result={gradeResult}
+            isGrading={isGrading}
+            error={gradeError}
+          />
+        )}
 
         {isTeacher && showBroadcastWidget && (
           <div className="bg-white rounded-lg border-2 border-orange-400 shadow-md p-5 mb-5 space-y-4">
@@ -996,10 +1058,24 @@ export default function ExamWorkspacePage() {
               currentIndex={currentQIndex}
               answeredIds={answeredIds}
               testCases={allTestCases}
-              isSubmitting={isSubmittingExam}
+              isSubmitting={isTeacher ? isGrading : isSubmittingExam}
               onSelect={selectQuestion}
-              onReviewSubmit={() => setReviewOpen(true)}
+              onReviewSubmit={
+                isTeacher ? handleGradeExam : () => setReviewOpen(true)
+              }
               onClose={() => setSidebarOpen(false)}
+              actionLabel={isTeacher ? "Grade Exam" : undefined}
+              actionHint={
+                isTeacher
+                  ? "Runs the real backend grader without creating a submission"
+                  : undefined
+              }
+              actionDescription={
+                isTeacher
+                  ? "Grade every question against its configured test cases, including hidden tests. No student submission will be created."
+                  : undefined
+              }
+              submittingLabel={isTeacher ? "Grading..." : undefined}
             />
           )}
         </div>
@@ -1007,25 +1083,36 @@ export default function ExamWorkspacePage() {
         <div className="mt-5 flex items-center justify-end border-t border-slate-200 pt-4">
           <button
             type="button"
-            onClick={() => setReviewOpen(true)}
-            className="px-5 py-2 rounded bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold shadow-sm transition-all flex items-center gap-2"
+            onClick={isTeacher ? handleGradeExam : () => setReviewOpen(true)}
+            disabled={isTeacher ? isGrading : isSubmittingExam}
+            className="px-5 py-2 rounded bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold shadow-sm transition-all flex items-center gap-2 disabled:opacity-50"
           >
-            <Send className="w-3.5 h-3.5" />
-            Review & Submit Test
+            {isTeacher ? (
+              <ClipboardCheck className="w-3.5 h-3.5" />
+            ) : (
+              <Send className="w-3.5 h-3.5" />
+            )}
+            {isTeacher
+              ? isGrading
+                ? "Grading..."
+                : "Grade Exam"
+              : "Review & Submit Test"}
           </button>
         </div>
 
-        <SubmitReviewModal
-          isOpen={reviewOpen}
-          examTitle={exam.title}
-          questions={questions}
-          answers={answers}
-          answeredIds={answeredIds}
-          testCases={allTestCases}
-          isSubmitting={isSubmittingExam}
-          onClose={() => setReviewOpen(false)}
-          onConfirm={handleConfirmSubmit}
-        />
+        {!isTeacher && (
+          <SubmitReviewModal
+            isOpen={reviewOpen}
+            examTitle={exam.title}
+            questions={questions}
+            answers={answers}
+            answeredIds={answeredIds}
+            testCases={allTestCases}
+            isSubmitting={isSubmittingExam}
+            onClose={() => setReviewOpen(false)}
+            onConfirm={handleConfirmSubmit}
+          />
+        )}
 
         <ExamVerificationModal
           examId={exam.id}

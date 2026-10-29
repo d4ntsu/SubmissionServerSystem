@@ -96,6 +96,26 @@ export interface Submission {
   error_summary?: string | null;
 }
 
+export type ExamGradeOverallStatus = "completed" | "partial" | "error";
+
+export interface ExamGradeQuestionResult {
+  question_id: number;
+  title: string;
+  status: SubmissionStatus;
+  score: number | null;
+  max_score: number;
+  error_summary?: string | null;
+  test_results: SubmissionTestResult[];
+}
+
+export interface ExamGradeResult {
+  exam_id: number;
+  status: ExamGradeOverallStatus;
+  score: number;
+  max_score: number;
+  questions: ExamGradeQuestionResult[];
+}
+
 export type AnnouncementPriority = "info" | "warning" | "urgent";
 
 export interface Announcement {
@@ -130,4 +150,21 @@ export interface RealtimeEventLog {
   source: string;
   message: string;
   details?: Record<string, any>;
+}
+
+export interface ExamMonitorParticipant {
+  student_id: number;
+  student_name: string;
+  username: string;
+  client_ip: string | null;
+  status: "online" | "in_exam" | "submitted" | "idle" | "disconnected";
+  current_exam: string;
+  current_question: string | null;
+  submissions_count: number;
+  online: boolean;
+  last_seen_at: string | null;
+  latest_submission_status: SubmissionStatus | null;
+  latest_score: number | null;
+  latest_max_score: number | null;
+  latest_submitted_at: string | null;
 }

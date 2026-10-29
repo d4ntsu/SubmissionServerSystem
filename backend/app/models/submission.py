@@ -32,6 +32,26 @@ class Submission(Base):
     question = relationship("Question")
     test_results = relationship("SubmissionTestResult", back_populates="submission", cascade="all, delete-orphan")
 
+    @property
+    def student_name(self) -> str | None:
+        return self.student.full_name if self.student else None
+
+    @property
+    def student_username(self) -> str | None:
+        return self.student.username if self.student else None
+
+    @property
+    def question_title(self) -> str | None:
+        return self.question.title if self.question else None
+
+    @property
+    def exam_id(self) -> int | None:
+        return self.question.exam_id if self.question else None
+
+    @property
+    def exam_title(self) -> str | None:
+        return self.question.exam.title if self.question and self.question.exam else None
+
 
 class SubmissionTestResult(Base):
     __tablename__ = "submission_test_results"

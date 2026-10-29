@@ -22,7 +22,7 @@ export function middleware(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = role
       ? role === "teacher"
-        ? "/teacher/server/submissions"
+        ? "/teacher/exams"
         : "/dashboard"
       : "/login";
     url.search = "";

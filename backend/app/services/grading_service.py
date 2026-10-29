@@ -97,6 +97,8 @@ async def _grade_stdio(
     submission: Submission,
     question: Question,
     test_cases: list[TestCase],
+    *,
+    publish_event: bool = True,
 ) -> None:
     total_weight = sum(tc.score_weight for tc in test_cases) or 1.0
     earned_weight = 0.0
@@ -197,7 +199,8 @@ async def _grade_stdio(
     submission.score = round(score, 2)
     submission.graded_at = datetime.now(timezone.utc)
     db.commit()
-    await publish_submission_event("submission.completed", submission.id)
+    if publish_event:
+        await publish_submission_event("submission.completed", submission.id)
 
 
 def _create_test_result(

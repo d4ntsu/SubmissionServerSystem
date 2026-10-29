@@ -1,34 +1,33 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { ExamVerificationModal } from "@/components/exam/ExamVerificationModal";
 import { useSocket } from "@/lib/socket-context";
-import { Exam, ExamStatus } from "@/types";
+import { Exam } from "@/types";
 import {
-  Layers,
   Plus,
   Play,
   Square,
-  CheckCircle2,
-  Clock,
   Edit2,
   Trash2,
-  ExternalLink,
-  Radio,
   FileCode2,
   X,
   AlertCircle,
-  HelpCircle,
   Lock,
   KeyRound,
   FlaskConical,
   ShieldCheck,
+  MoreVertical,
+  Server,
+  Activity,
 } from "lucide-react";
 
 export default function TeacherExamManagementPage() {
+  const router = useRouter();
   const {
     exams,
     createExam,
@@ -41,6 +40,61 @@ export default function TeacherExamManagementPage() {
   } = useSocket();
   const [filter, setFilter] = useState<string>("all");
   const [verificationExamId, setVerificationExamId] = useState<number | null>(null);
+  const [optionsExamId, setOptionsExamId] = useState<number | null>(null);
+  const [optionsMenuPosition, setOptionsMenuPosition] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
+
+  const toggleOptionsMenu = (
+    event: React.MouseEvent<HTMLButtonElement>,
+    examId: number
+  ) => {
+    if (optionsExamId === examId) {
+      setOptionsExamId(null);
+      return;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const menuWidth = 224;
+    const menuHeight = 250;
+    const left = Math.max(
+      8,
+      Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8)
+    );
+    const top =
+      rect.bottom + 6 + menuHeight > window.innerHeight
+        ? Math.max(8, rect.top - menuHeight - 6)
+        : rect.bottom + 6;
+    setOptionsMenuPosition({ top, left });
+    setOptionsExamId(examId);
+  };
+
+  const closeOptionsMenu = () => {
+    setOptionsExamId(null);
+    setOptionsMenuPosition(null);
+  };
+
+  useEffect(() => {
+    if (optionsExamId === null) return;
+
+    const handleViewportChange = () => {
+      setOptionsExamId(null);
+      setOptionsMenuPosition(null);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") handleViewportChange();
+    };
+
+    window.addEventListener("scroll", handleViewportChange, true);
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("scroll", handleViewportChange, true);
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [optionsExamId]);
 
   const startExam = (exam: Exam) => {
     if (!examVerifications[exam.id]?.passed) {
@@ -70,6 +124,7 @@ export default function TeacherExamManagementPage() {
     if (filter === "all") return true;
     return e.status === filter;
   });
+  const optionsExam = exams.find((exam) => exam.id === optionsExamId) ?? null;
   const examDataReady = !isLoadingExamData && !dataApiError;
 
   const openCreateModal = () => {
@@ -116,16 +171,18 @@ export default function TeacherExamManagementPage() {
           duration_minutes: Number(formDuration),
           access_password: accessPassword,
         });
+        setIsModalOpen(false);
       } else {
-        await createExam({
+        const created = await createExam({
           title: formTitle,
           description: formDescription,
           duration_minutes: Number(formDuration),
           status: "draft",
           access_password: accessPassword || undefined,
         });
+        setIsModalOpen(false);
+        router.push(`/teacher/exams/${created.id}/submissions`);
       }
-      setIsModalOpen(false);
     } catch (error) {
       setFormError(
         error instanceof Error ? error.message : "Could not save the exam. Please try again."
@@ -391,44 +448,33 @@ export default function TeacherExamManagementPage() {
                           </div>
                         </td>
 
-                        {/* Questions Management & Settings */}
-                        <td className="py-3 px-4 text-right space-x-1.5 font-mono">
-                          <button
-                            onClick={() => setVerificationExamId(exam.id)}
-                            className="p-1.5 text-slate-400 hover:text-orange-600 hover:bg-orange-50 rounded transition-colors"
-                            title="Test exam and verify grading before opening"
-                          >
-                            <FlaskConical className="w-3.5 h-3.5" />
-                          </button>
+                        {/* Questions Management & Options Menu */}
+                        <td className="py-3 px-4 text-right whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1.5">
+                            <Link
+                              href={`/teacher/exams/${exam.id}/questions`}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-sans font-bold rounded shadow-xs transition-colors"
+                              title="Manage questions and test cases"
+                            >
+                              <FileCode2 className="w-3.5 h-3.5 text-orange-400" />
+                              <span>Questions ({exam.questions_count || 0})</span>
+                            </Link>
 
-                          <Link
-                            href={`/teacher/exams/${exam.id}/questions`}
-                            className="inline-flex items-center gap-1 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-sans font-bold rounded shadow-xs transition-colors"
-                            title="Manage questions and test cases"
-                          >
-                            <FileCode2 className="w-3.5 h-3.5 text-orange-400" />
-                            <span>Questions ({exam.questions_count || 0})</span>
-                          </Link>
-
-                          <button
-                            onClick={() => openEditModal(exam)}
-                            className="p-1.5 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded transition-colors"
-                            title="Edit details"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-
-                          <button
-                            onClick={() => {
-                              if (confirm(`Are you sure you want to delete exam #${exam.id}?`)) {
-                                deleteExam(exam.id);
-                              }
-                            }}
-                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-100 rounded transition-colors"
-                            title="Delete exam"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                            <button
+                              type="button"
+                              onClick={(event) => toggleOptionsMenu(event, exam.id)}
+                              aria-haspopup="menu"
+                              aria-expanded={optionsExamId === exam.id}
+                              className={`p-1.5 rounded transition-colors ${
+                                optionsExamId === exam.id
+                                  ? "bg-orange-100 text-orange-700"
+                                  : "text-slate-400 hover:text-slate-800 hover:bg-slate-100"
+                              }`}
+                              title="More exam options"
+                            >
+                              <MoreVertical className="w-4 h-4" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -438,6 +484,100 @@ export default function TeacherExamManagementPage() {
             </div>
           </div>
         </div>
+
+        {/* Exam options menu (fixed so the table's scroll container cannot clip it) */}
+        {optionsExamId !== null && optionsMenuPosition && (
+          <>
+            <div
+              className="fixed inset-0 z-40"
+              onClick={closeOptionsMenu}
+              aria-hidden="true"
+            />
+            <div
+              role="menu"
+              className="fixed z-50 w-56 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-xl"
+              style={{
+                top: optionsMenuPosition.top,
+                left: optionsMenuPosition.left,
+              }}
+            >
+              <div className="border-b border-slate-100 px-3 py-2">
+                <span className="block text-[9px] font-bold uppercase tracking-widest text-slate-400 font-mono">
+                  EXAM #{optionsExamId}
+                </span>
+                <p className="truncate text-xs font-bold text-slate-800">
+                  {optionsExam?.title || "Examination"}
+                </p>
+              </div>
+
+              <Link
+                href={`/teacher/exams/${optionsExamId}/submissions`}
+                role="menuitem"
+                onClick={closeOptionsMenu}
+                className="flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-orange-50 hover:text-orange-700"
+              >
+                <Server className="w-3.5 h-3.5 text-slate-400" />
+                Submission Dashboard
+              </Link>
+              <Link
+                href={`/teacher/exams/${optionsExamId}/monitoring`}
+                role="menuitem"
+                onClick={closeOptionsMenu}
+                className="flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-orange-50 hover:text-orange-700"
+              >
+                <Activity className="w-3.5 h-3.5 text-slate-400" />
+                Realtime Monitor
+              </Link>
+
+              <div className="my-1 border-t border-slate-100" />
+
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const id = optionsExamId;
+                  closeOptionsMenu();
+                  if (id !== null) setVerificationExamId(id);
+                }}
+                className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100"
+              >
+                <FlaskConical className="w-3.5 h-3.5 text-slate-400" />
+                Test &amp; Verify
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const target = optionsExam;
+                  closeOptionsMenu();
+                  if (target) openEditModal(target);
+                }}
+                className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100"
+              >
+                <Edit2 className="w-3.5 h-3.5 text-slate-400" />
+                Edit Details
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const id = optionsExamId;
+                  closeOptionsMenu();
+                  if (
+                    id !== null &&
+                    confirm(`Are you sure you want to delete exam #${id}?`)
+                  ) {
+                    deleteExam(id);
+                  }
+                }}
+                className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-red-600 transition-colors hover:bg-red-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete Exam
+              </button>
+            </div>
+          </>
+        )}
 
         {/* Create / Edit Exam Modal */}
         {isModalOpen && (

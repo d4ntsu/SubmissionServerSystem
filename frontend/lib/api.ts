@@ -1,4 +1,4 @@
-import { Exam, Question, TestCase, Submission, User, UserRole, Announcement, StudentClientStatus, RealtimeEventLog, ExamStatus, CodingLanguage, QuestionType } from "@/types";
+import { Exam, Question, TestCase, Submission, User, UserRole, Announcement, StudentClientStatus, RealtimeEventLog, ExamStatus, CodingLanguage, QuestionType, ExamMonitorParticipant, ExamGradeResult } from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -1205,6 +1205,160 @@ export async function fetchSubmissionResult(
     if (err instanceof ApiError) throw err;
     throw new ApiError(
       "Loading grading results could not reach the backend. Check the connection and retry.",
+      "network"
+    );
+  }
+}
+
+interface BackendExamSubmissionEntry {
+  submission: {
+    id: number;
+    student_id: number;
+    student_name?: string | null;
+    student_username?: string | null;
+    question_id: number;
+    question_title?: string | null;
+    exam_id?: number | null;
+    exam_title?: string | null;
+    language: string;
+    source_code: string;
+    status: string;
+    score: number | null;
+    max_score: number;
+    error_summary: string | null;
+    submitted_at?: string | null;
+    graded_at?: string | null;
+  };
+  test_results: BackendSubmissionResult["test_results"];
+}
+
+/** GET /results/exam/{examId} — teacher view of every submission in one exam. */
+export async function fetchExamSubmissions(
+  examId: number,
+  token?: string
+): Promise<Submission[]> {
+  try {
+    const res = await authenticatedFetch(`${API_BASE_URL}/results/exam/${examId}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw await detailedHttpError("Loading exam submissions", res);
+    const data: unknown = await readJson(res, "Loading exam submissions");
+    if (!Array.isArray(data)) {
+      throw new ApiError(
+        "Loading exam submissions returned an invalid response.",
+        "invalid_response",
+        res.status
+      );
+    }
+
+    return (data as BackendExamSubmissionEntry[]).map((entry) => {
+      const sub = entry.submission;
+      return {
+        id: sub.id,
+        student_id: sub.student_id,
+        student_name: sub.student_name || `Student #${sub.student_id}`,
+        student_username: sub.student_username || undefined,
+        question_id: sub.question_id,
+        question_title: sub.question_title || `Question #${sub.question_id}`,
+        exam_id: sub.exam_id ?? examId,
+        exam_title: sub.exam_title || undefined,
+        language: sub.language,
+        source_code: sub.source_code,
+        status: sub.status as Submission["status"],
+        score: sub.score,
+        max_score: sub.max_score,
+        error_summary: sub.error_summary,
+        submitted_at: sub.submitted_at || new Date().toISOString(),
+        graded_at: sub.graded_at,
+        test_results: (entry.test_results || []).map((tr) => ({
+          id: tr.id,
+          submission_id: sub.id,
+          test_case_id: tr.test_case_id,
+          is_sample: tr.is_sample,
+          passed: tr.passed,
+          stdout: tr.stdout || "",
+          stderr: tr.stderr || "",
+          compile_output: tr.compile_output || "",
+          exit_code: tr.exit_code,
+          time: tr.time,
+          memory: tr.memory,
+          input_data: tr.input_data || "",
+          expected_output: tr.expected_output || "",
+          awarded_points: tr.awarded_points,
+          score_weight: tr.score_weight,
+          message: tr.message,
+        })),
+      } satisfies Submission;
+    });
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(
+      "Loading exam submissions could not reach the backend. Check the connection and retry.",
+      "network"
+    );
+  }
+}
+
+/** GET /exams/{examId}/monitor — exam-scoped participant and submission overview. */
+export async function fetchExamMonitor(
+  examId: number,
+  token?: string
+): Promise<ExamMonitorParticipant[]> {
+  try {
+    const res = await authenticatedFetch(`${API_BASE_URL}/exams/${examId}/monitor`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw await detailedHttpError("Loading exam monitor", res);
+    const data: unknown = await readJson(res, "Loading exam monitor");
+    if (!Array.isArray(data)) {
+      throw new ApiError(
+        "Loading exam monitor returned an invalid response.",
+        "invalid_response",
+        res.status
+      );
+    }
+    return data as ExamMonitorParticipant[];
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(
+      "Loading exam monitor could not reach the backend. Check the connection and retry.",
+      "network"
+    );
+  }
+}
+
+/** POST /exams/{examId}/grade — grade the teacher's current answers without persisting them. */
+export interface ExamGradeAnswerPayload {
+  question_id: number;
+  language: string;
+  source_code: string;
+}
+
+export async function gradeExamRequest(
+  examId: number,
+  answers: ExamGradeAnswerPayload[],
+  token?: string
+): Promise<ExamGradeResult> {
+  try {
+    const res = await authenticatedFetch(`${API_BASE_URL}/exams/${examId}/grade`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ answers }),
+    });
+    if (!res.ok) throw await detailedHttpError("Grading the exam", res);
+    const data: unknown = await readJson(res, "Grading the exam");
+    if (!isRecord(data) || !Array.isArray(data.questions)) {
+      throw new ApiError(
+        "Grading the exam returned an invalid response.",
+        "invalid_response",
+        res.status
+      );
+    }
+    return data as unknown as ExamGradeResult;
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(
+      "Grading the exam could not reach the backend. Check the connection and retry.",
       "network"
     );
   }

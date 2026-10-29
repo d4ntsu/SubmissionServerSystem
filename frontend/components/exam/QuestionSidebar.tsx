@@ -21,6 +21,10 @@ interface QuestionSidebarProps {
   onSelect: (index: number) => void;
   onReviewSubmit: () => void;
   onClose: () => void;
+  actionLabel?: string;
+  actionHint?: string;
+  actionDescription?: string;
+  submittingLabel?: string;
 }
 
 function isQuestionConfigured(question: Question, cases: TestCase[]): boolean {
@@ -41,6 +45,10 @@ export function QuestionSidebar({
   onSelect,
   onReviewSubmit,
   onClose,
+  actionLabel = "Review & Submit Test",
+  actionHint = "Submission can be confirmed or cancelled",
+  actionDescription = "Review every question before submitting. Unanswered questions can still be submitted, but they will not earn points.",
+  submittingLabel = "Submitting...",
 }: QuestionSidebarProps) {
   const answeredSet = new Set(answeredIds);
   const answeredCount = questions.filter((question) => answeredSet.has(question.id)).length;
@@ -148,8 +156,7 @@ export function QuestionSidebar({
 
         <div className="p-3 border-t border-slate-200 bg-slate-50 space-y-2">
           <div className="text-[10px] text-slate-400 font-mono leading-relaxed">
-            Review every question before submitting. Unanswered questions can still be submitted,
-            but they will not earn points.
+            {actionDescription}
           </div>
           <button
             type="button"
@@ -158,11 +165,11 @@ export function QuestionSidebar({
             className="w-full px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs rounded shadow-xs transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
           >
             <Send className="w-3.5 h-3.5" />
-            {isSubmitting ? "Submitting..." : "Review & Submit Test"}
+            {isSubmitting ? submittingLabel : actionLabel}
           </button>
           <div className="flex items-center justify-center gap-1.5 text-[10px] font-mono text-slate-400">
             <ClipboardCheck className="w-3 h-3" />
-            Submission can be confirmed or cancelled
+            {actionHint}
           </div>
         </div>
       </aside>

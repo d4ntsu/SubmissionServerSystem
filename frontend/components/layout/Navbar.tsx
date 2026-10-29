@@ -9,7 +9,6 @@ import {
   GraduationCap,
   LogOut,
   Layers,
-  Activity,
   FileCode2,
   CheckCircle2,
 } from "lucide-react";
@@ -39,8 +38,6 @@ export function Navbar() {
 
   const teacherNavItems = [
     { label: "Exams & Questions", href: "/teacher/exams", icon: Layers },
-    { label: "Submissions Dashboard", href: "/teacher/server/submissions", icon: FileCode2 },
-    { label: "Realtime Monitor", href: "/teacher/server/monitoring", icon: Activity },
     { label: "Active Exam Workspace", href: `/student/exams/${activeExam?.id ?? 1}`, icon: FileCode2 },
   ];
 
@@ -64,7 +61,7 @@ export function Navbar() {
         {/* Brand / Title */}
         <div className="flex items-center gap-8">
           <Link
-            href={isTeacher ? "/teacher/server/submissions" : "/dashboard"}
+            href={isTeacher ? "/teacher/exams" : "/dashboard"}
             className="flex items-center gap-2.5 font-bold text-base text-white hover:text-orange-400 transition-colors"
           >
             <div className="w-9 h-9 rounded-md bg-orange-500 flex items-center justify-center text-white shadow-sm font-black">

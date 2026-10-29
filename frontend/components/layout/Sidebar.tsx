@@ -9,9 +9,6 @@ import {
   FileCode2,
   CheckCircle2,
   Megaphone,
-  Server,
-  Activity,
-  ShieldAlert,
 } from "lucide-react";
 
 interface SidebarProps {
@@ -46,22 +43,14 @@ export function Sidebar({ isOpen }: SidebarProps) {
 
   const teacherGeneralLinks = [
     {
+      name: "Exams & Questions",
+      href: "/teacher/exams",
+      icon: FileCode2,
+    },
+    {
       name: "Announcements Hub",
       href: "/teacher/announcements",
       icon: Megaphone,
-    },
-  ];
-
-  const teacherServerLinks = [
-    {
-      name: "Submission Dashboard",
-      href: "/teacher/server/submissions",
-      icon: Server,
-    },
-    {
-      name: "Realtime Monitor & Logs",
-      href: "/teacher/server/monitoring",
-      icon: Activity,
     },
   ];
 
@@ -124,40 +113,6 @@ export function Sidebar({ isOpen }: SidebarProps) {
                 }`}
               >
                 <Icon className={`w-4 h-4 ${active ? "text-brand-600 dark:text-brand-400" : ""}`} />
-                {item.name}
-              </Link>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Teacher Server Operations (Only visible to teacher; no hint box for students) */}
-      {isTeacher && (
-        <div className="mt-6 space-y-1">
-          <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 flex items-center justify-between">
-            <span className="flex items-center gap-1.5">
-              <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
-              Server Operations
-            </span>
-            <span className="text-[9px] bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400 px-1 py-0.5 rounded font-mono">
-              Teacher Only
-            </span>
-          </div>
-
-          {teacherServerLinks.map((item) => {
-            const active = isActive(item.href);
-            const Icon = item.icon;
-            return (
-              <Link
-                key={item.name}
-                href={item.href}
-                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                  active
-                    ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 font-semibold border-l-2 border-amber-500"
-                    : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
-                }`}
-              >
-                <Icon className={`w-4 h-4 ${active ? "text-amber-600" : ""}`} />
                 {item.name}
               </Link>
             );
