@@ -15,7 +15,7 @@ import { ExamGradeResultPanel } from "@/components/exam/ExamGradeResultPanel";
 import { useAuth } from "@/lib/auth-context";
 import { useSocket } from "@/lib/socket-context";
 import { gradeExamRequest, MOCK_QUESTIONS } from "@/lib/api";
-import { gradeSampleTests, hasAnswer } from "@/lib/grading";
+import { gradeSampleTests, hasAnswer, hasMcAnswer } from "@/lib/grading";
 import { ExamGradeResult, Question, TestCase } from "@/types";
 import {
   AlertTriangle,
@@ -38,10 +38,57 @@ import {
 } from "lucide-react";
 
 function templateFor(question: Question): string {
+  if (question.question_type === "MULTIPLE_CHOICE" || question.question_type === "SHORT_ANSWER") {
+    return "";
+  }
   return question.boilerplate ?? "";
 }
 
+function getMultipleChoiceOptions(question: Question): string[] {
+  const raw: unknown = question.mc_options;
+  let options: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      options = JSON.parse(raw);
+    } catch {
+      options = raw.split(/\r?\n/);
+    }
+  }
+  if (!Array.isArray(options)) return [];
+  return options
+    .filter((option): option is string => typeof option === "string")
+    .map((option) => option.replace(/^\s*[A-Z][.)]\s*/i, "").trim())
+    .filter(Boolean);
+}
+
+function getSelectedOptionLetters(answer: string): string[] {
+  if (!answer.trim()) return [];
+  try {
+    const parsed: unknown = JSON.parse(answer);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .filter((letter): letter is string => typeof letter === "string")
+        .map((letter) => letter.trim().toUpperCase())
+        .filter(Boolean);
+    }
+    if (typeof parsed === "string") return [parsed.toUpperCase()];
+  } catch {
+    return answer
+      .replace(/;/g, ",")
+      .split(",")
+      .map((letter) => letter.trim().toUpperCase())
+      .filter(Boolean);
+  }
+  return [];
+}
+
 function isQuestionConfigured(question: Question, cases: TestCase[]): boolean {
+  if (question.question_type === "MULTIPLE_CHOICE") {
+    return getMultipleChoiceOptions(question).length >= 2;
+  }
+  if (question.question_type === "SHORT_ANSWER") {
+    return true;
+  }
   if (!cases.length) return false;
   return cases.every((testCase) =>
     question.question_type === "JAVA_CLASS_METHOD"
@@ -174,12 +221,17 @@ export default function ExamWorkspacePage() {
     () =>
       questions
         .filter(
-          (question) =>
-            Boolean(interactedIds[question.id]) || hasAnswer(answers[question.id] || "")
-        )
-        .map((question) => question.id),
-    [answers, questions, interactedIds]
-  );
+            (question) => {
+              const answer = answers[question.id] || "";
+              if (question.question_type === "MULTIPLE_CHOICE" || question.question_type === "SHORT_ANSWER") {
+                return Boolean(interactedIds[question.id]) || hasMcAnswer(answer);
+              }
+              return Boolean(interactedIds[question.id]) || hasAnswer(answer);
+            }
+          )
+          .map((question) => question.id),
+      [answers, questions, interactedIds]
+    );
 
   const answeredSet = useMemo(() => new Set(answeredIds), [answeredIds]);
   const isAnswered = (question: Question) => answeredSet.has(question.id);
@@ -550,6 +602,10 @@ export default function ExamWorkspacePage() {
 
   const resultsVisible = currentQuestion.show_result_to_student !== false;
   const questionConfigured = isQuestionConfigured(currentQuestion, questionTestCases);
+  const isObjectiveQuestion =
+    currentQuestion.question_type === "MULTIPLE_CHOICE" ||
+    currentQuestion.question_type === "SHORT_ANSWER";
+  const isCodingQuestion = !isObjectiveQuestion;
   const languageLabel = currentQuestion.language === "java" ? "Java 15" : "Python 3.10";
 
   return (
@@ -700,15 +756,17 @@ export default function ExamWorkspacePage() {
               <span>Time Left: {formatTime(timeLeft)}</span>
             </div>
 
-            <button
-              type="button"
-              onClick={handleRunSample}
-              disabled={isRunningSample}
-              className="px-3.5 py-2 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors flex items-center gap-1.5 border border-slate-200 disabled:opacity-50"
-            >
-              <Play className="w-3 h-3 text-slate-600 fill-slate-600" />
-              <span>{isRunningSample ? "Running..." : "Run Sample"}</span>
-            </button>
+            {isCodingQuestion && (
+              <button
+                type="button"
+                onClick={handleRunSample}
+                disabled={isRunningSample}
+                className="px-3.5 py-2 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors flex items-center gap-1.5 border border-slate-200 disabled:opacity-50"
+              >
+                <Play className="w-3 h-3 text-slate-600 fill-slate-600" />
+                <span>{isRunningSample ? "Running..." : "Run Sample"}</span>
+              </button>
+            )}
 
             <button
               type="button"
@@ -869,18 +927,24 @@ export default function ExamWorkspacePage() {
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded border border-slate-200 font-mono text-slate-600">
-                    <div>
-                      <span className="text-[10px] text-slate-400 block font-bold">
-                        INSTRUCTOR-SELECTED LANGUAGE:
-                      </span>
-                      <span className="font-semibold text-slate-800">{languageLabel}</span>
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-slate-400 block font-bold">TIME LIMIT:</span>
-                      <span className="font-semibold text-slate-800">
-                        {currentQuestion.time_limit}.0 Seconds
-                      </span>
-                    </div>
+                    {isCodingQuestion && (
+                      <>
+                        <div>
+                          <span className="text-[10px] text-slate-400 block font-bold">
+                            INSTRUCTOR-SELECTED LANGUAGE:
+                          </span>
+                          <span className="font-semibold text-slate-800">{languageLabel}</span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 block font-bold">
+                            CPU TIME LIMIT:
+                          </span>
+                          <span className="font-semibold text-slate-800">
+                            {currentQuestion.time_limit}.0 Seconds
+                          </span>
+                        </div>
+                      </>
+                    )}
                     <div>
                       <span className="text-[10px] text-slate-400 block font-bold">
                         QUESTION TYPE:
@@ -899,7 +963,9 @@ export default function ExamWorkspacePage() {
                     </div>
                   </div>
 
-                  <MarkdownRenderer content={currentQuestion.description} />
+                  {isCodingQuestion && (
+                    <MarkdownRenderer content={currentQuestion.description} />
+                  )}
 
                   {currentQuestion.question_type === "JAVA_CLASS_METHOD" && (
                     <div className="p-3 bg-slate-50 rounded border border-slate-200 space-y-1.5">
@@ -926,6 +992,7 @@ export default function ExamWorkspacePage() {
                     </div>
                   )}
 
+                  {isCodingQuestion && (
                   <div className="space-y-2 pt-2 border-t border-slate-100">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono block">
                       Sample Test Cases (Visible)
@@ -985,42 +1052,141 @@ export default function ExamWorkspacePage() {
                         </div>
                       ))}
                   </div>
+                  )}
                 </div>
               </div>
 
               <div className="lg:col-span-7 flex flex-col space-y-4">
-                <div className="bg-slate-900 rounded-lg border border-slate-800 shadow-md flex flex-col h-[420px] overflow-hidden">
-                  <div className="px-4 py-2 bg-slate-950 border-b border-slate-800 flex items-center justify-between text-xs text-slate-400">
-                    <span className="font-mono text-slate-200 font-semibold flex items-center gap-1.5">
-                      <Code2 className="w-3.5 h-3.5 text-orange-400" />
-                      Solution.{currentQuestion.language === "java" ? "java" : "py"}
-                      <span className="ml-1 rounded bg-slate-800 px-1.5 py-0.5 text-[9px] uppercase text-slate-400">
-                        {languageLabel} selected by instructor
-                      </span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleResetCode}
-                      className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white transition-colors"
-                      title="Reset to the teacher-provided starter code, or blank if none was provided"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      Reset
-                    </button>
+                {currentQuestion.question_type === "MULTIPLE_CHOICE" && (
+                  <div className="bg-white rounded-lg border border-slate-200 shadow-md p-5 space-y-3">
+                    <div className="border-b border-slate-100 pb-3">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 font-mono">
+                        Question Text
+                      </h3>
+                      <div className="mt-2 text-sm text-slate-800">
+                        <MarkdownRenderer content={currentQuestion.description} />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      {(() => {
+                        const options = getMultipleChoiceOptions(currentQuestion);
+                        if (!options.length) {
+                          return (
+                            <p className="text-xs text-slate-400 italic">
+                              No options configured for this question.
+                            </p>
+                          );
+                        }
+                        const isMulti = currentQuestion.mc_allow_multiple === true;
+                        const selected = new Set(getSelectedOptionLetters(currentCode));
+                        return options.map((option, index) => {
+                          const letter = String.fromCharCode(65 + index);
+                          const isSelected = selected.has(letter);
+                          return (
+                            <label
+                              key={letter}
+                              className={`flex w-full cursor-pointer items-start gap-3 rounded border p-3 text-xs font-mono transition-all ${
+                                isSelected
+                                  ? "border-orange-500 bg-orange-50 shadow-xs"
+                                  : "border-slate-200 bg-white hover:bg-slate-50"
+                              }`}
+                            >
+                              <input
+                                type={isMulti ? "checkbox" : "radio"}
+                                name={`question-${currentQuestion.id}`}
+                                value={letter}
+                                checked={isSelected}
+                                onChange={() => {
+                                  const next = isMulti
+                                    ? selected.has(letter)
+                                      ? Array.from(selected).filter((item) => item !== letter)
+                                      : [...Array.from(selected), letter]
+                                    : [letter];
+                                  updateCode(JSON.stringify(next.sort()));
+                                }}
+                                className="mt-0.5 accent-orange-500"
+                              />
+                              <span className="font-bold text-slate-800">{letter})</span>
+                              <span className="text-slate-700">{option}</span>
+                            </label>
+                          );
+                        });
+                      })()}
+                    </div>
+                    <p className="text-[10px] text-slate-400">
+                      {currentQuestion.mc_allow_multiple
+                        ? "Select all that apply."
+                        : "Select one answer."}
+                    </p>
                   </div>
+                )}
 
-                  <div className="flex-1 relative">
-                    <textarea
+                {currentQuestion.question_type === "SHORT_ANSWER" && (
+                  <div className="bg-white rounded-lg border border-slate-200 shadow-md p-5 space-y-3">
+                    <div className="border-b border-slate-100 pb-3">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 font-mono">
+                        Question Text
+                      </h3>
+                      <div className="mt-2 text-sm text-slate-800">
+                        <MarkdownRenderer content={currentQuestion.description} />
+                      </div>
+                    </div>
+                    <label
+                      htmlFor={`short-answer-${currentQuestion.id}`}
+                      className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono"
+                    >
+                      Type your answer
+                    </label>
+                    <input
+                      id={`short-answer-${currentQuestion.id}`}
+                      type="text"
                       value={currentCode}
                       onChange={(event) => updateCode(event.target.value)}
-                      onKeyDown={handleCodeKeyDown}
-                      spellCheck={false}
-                      className="w-full h-full p-4 bg-transparent text-slate-100 font-mono text-xs leading-relaxed focus:outline-none resize-none selection:bg-orange-500/30"
-                      placeholder="// Enter your solution here..."
+                      placeholder="Type your answer here..."
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded text-slate-900 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono text-sm"
                     />
+                    <p className="text-[10px] text-slate-400">
+                      Answer is case-insensitive. Leading/trailing whitespace is ignored.
+                    </p>
                   </div>
-                </div>
+                )}
 
+                              {/* Coding UI for STDIN_STDOUT and JAVA_CLASS_METHOD */}
+                              {currentQuestion.question_type !== "MULTIPLE_CHOICE" && currentQuestion.question_type !== "SHORT_ANSWER" && (
+                              <div className="bg-slate-900 rounded-lg border border-slate-800 shadow-md flex flex-col h-[420px] overflow-hidden">
+                                <div className="px-4 py-2 bg-slate-950 border-b border-slate-800 flex items-center justify-between text-xs text-slate-400">
+                                  <span className="font-mono text-slate-200 font-semibold flex items-center gap-1.5">
+                                    <Code2 className="w-3.5 h-3.5 text-orange-400" />
+                                    Solution.{currentQuestion.language === "java" ? "java" : "py"}
+                                    <span className="ml-1 rounded bg-slate-800 px-1.5 py-0.5 text-[9px] uppercase text-slate-400">
+                                      {languageLabel} selected by instructor
+                                    </span>
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={handleResetCode}
+                                    className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white transition-colors"
+                                    title="Reset to the teacher-provided starter code, or blank if none was provided"
+                                  >
+                                    <RotateCcw className="w-3 h-3" />
+                                    Reset
+                                  </button>
+                                </div>
+
+                                <div className="flex-1 relative">
+                                  <textarea
+                                    value={currentCode}
+                                    onChange={(event) => updateCode(event.target.value)}
+                                    onKeyDown={handleCodeKeyDown}
+                                    spellCheck={false}
+                                    className="w-full h-full p-4 bg-transparent text-slate-100 font-mono text-xs leading-relaxed focus:outline-none resize-none selection:bg-orange-500/30"
+                                    placeholder="// Enter your solution here..."
+                                  />
+                                </div>
+                              </div>
+                              )}
+
+                {isCodingQuestion && (
                 <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4 space-y-2">
                   <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono flex items-center gap-1.5">
@@ -1048,11 +1214,37 @@ export default function ExamWorkspacePage() {
                     )}
                   </pre>
                 </div>
+                )}
+
+                                {/* Previous / Next Question navigation */}
+                <div className="flex items-center justify-between gap-3 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => selectQuestion(currentQIndex - 1)}
+                    disabled={currentQIndex <= 0}
+                    className="px-4 py-2 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors flex items-center gap-1.5 border border-slate-200 disabled:opacity-40"
+                  >
+                    <span>←</span>
+                    <span>Previous Question</span>
+                  </button>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    {currentQIndex + 1} / {questions.length}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => selectQuestion(currentQIndex + 1)}
+                    disabled={currentQIndex >= questions.length - 1}
+                    className="px-4 py-2 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors flex items-center gap-1.5 border border-slate-200 disabled:opacity-40"
+                  >
+                    <span>Next Question</span>
+                    <span>→</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
 
-          {sidebarOpen && (
+                                          {sidebarOpen && (
             <QuestionSidebar
               questions={questions}
               currentIndex={currentQIndex}
@@ -1080,39 +1272,6 @@ export default function ExamWorkspacePage() {
           )}
         </div>
 
-        <div className="mt-5 flex items-center justify-end border-t border-slate-200 pt-4">
-          <button
-            type="button"
-            onClick={isTeacher ? handleGradeExam : () => setReviewOpen(true)}
-            disabled={isTeacher ? isGrading : isSubmittingExam}
-            className="px-5 py-2 rounded bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold shadow-sm transition-all flex items-center gap-2 disabled:opacity-50"
-          >
-            {isTeacher ? (
-              <ClipboardCheck className="w-3.5 h-3.5" />
-            ) : (
-              <Send className="w-3.5 h-3.5" />
-            )}
-            {isTeacher
-              ? isGrading
-                ? "Grading..."
-                : "Grade Exam"
-              : "Review & Submit Test"}
-          </button>
-        </div>
-
-        {!isTeacher && (
-          <SubmitReviewModal
-            isOpen={reviewOpen}
-            examTitle={exam.title}
-            questions={questions}
-            answers={answers}
-            answeredIds={answeredIds}
-            testCases={allTestCases}
-            isSubmitting={isSubmittingExam}
-            onClose={() => setReviewOpen(false)}
-            onConfirm={handleConfirmSubmit}
-          />
-        )}
 
         <ExamVerificationModal
           examId={exam.id}

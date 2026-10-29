@@ -946,20 +946,35 @@ export interface CreateQuestionPayload {
   title: string;
   description?: string;
   boilerplate?: string;
-  question_type?: "stdio" | "java_class";
+  question_type?: "stdio" | "java_class" | "multiple_choice" | "short_answer";
   max_score?: number;
   allowed_languages?: string;
   class_name?: string | null;
   method_signature?: string | null;
   method_mode?: "STATIC" | "INSTANCE";
+  mc_options?: string[] | null;
+  mc_correct_answers?: string[] | null;
+  mc_allow_multiple?: boolean;
+  short_answer?: string | null;
+  show_result_to_student?: boolean;
 }
 
-export function toBackendQuestionType(qt: QuestionType): "stdio" | "java_class" {
-  return qt === "JAVA_CLASS_METHOD" ? "java_class" : "stdio";
+export function toBackendQuestionType(qt: QuestionType): "stdio" | "java_class" | "multiple_choice" | "short_answer" {
+  switch (qt) {
+    case "JAVA_CLASS_METHOD": return "java_class";
+    case "MULTIPLE_CHOICE": return "multiple_choice";
+    case "SHORT_ANSWER": return "short_answer";
+    default: return "stdio";
+  }
 }
 
 export function toFrontendQuestionType(qt: string): QuestionType {
-  return qt === "java_class" ? "JAVA_CLASS_METHOD" : "STDIN_STDOUT";
+  switch (qt) {
+    case "java_class": return "JAVA_CLASS_METHOD";
+    case "multiple_choice": return "MULTIPLE_CHOICE";
+    case "short_answer": return "SHORT_ANSWER";
+    default: return "STDIN_STDOUT";
+  }
 }
 
 export function toBackendLanguage(lang: CodingLanguage): string {
@@ -971,13 +986,18 @@ export type BackendQuestion = {
   exam_id: number;
   title: string;
   description: string;
-  question_type: "stdio" | "java_class";
+  question_type: "stdio" | "java_class" | "multiple_choice" | "short_answer";
   max_score: number;
   allowed_languages: string;
   class_name: string | null;
   method_signature: string | null;
   method_mode: "STATIC" | "INSTANCE";
   boilerplate?: string | null;
+  mc_options?: string[] | null;
+  mc_correct_answers?: string[] | null;
+  mc_allow_multiple?: boolean;
+  short_answer?: string | null;
+  show_result_to_student?: boolean;
   created_at?: string | null;
 };
 
@@ -1004,7 +1024,11 @@ export function toFrontendQuestion(q: BackendQuestion): Question {
     method_mode: q.method_mode || "STATIC",
     return_type: signatureMatch?.[3].trim() || null,
     parameter_types: signatureMatch ? signatureMatch[2].trim() : null,
-    show_result_to_student: true,
+    show_result_to_student: q.show_result_to_student ?? true,
+    mc_options: q.mc_options,
+    mc_correct_answers: q.mc_correct_answers,
+    mc_allow_multiple: q.mc_allow_multiple ?? false,
+    short_answer: q.short_answer,
   };
 }
 

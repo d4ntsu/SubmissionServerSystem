@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -39,6 +40,13 @@ async def grade_submission(submission_id: int) -> None:
         question = db.get(Question, submission.question_id)
         if not question:
             await _fail_submission(db, submission, "Question not found")
+            return
+
+        if question.question_type == QuestionType.multiple_choice:
+            await _grade_multiple_choice(db, submission, question)
+            return
+        if question.question_type == QuestionType.short_answer:
+            await _grade_short_answer(db, submission, question)
             return
 
         test_cases = (
@@ -201,6 +209,102 @@ async def _grade_stdio(
     db.commit()
     if publish_event:
         await publish_submission_event("submission.completed", submission.id)
+
+
+async def _grade_multiple_choice(
+    db: Session,
+    submission: Submission,
+    question: Question,
+) -> None:
+    """Grade selected option letters against the question's configured answer set."""
+
+    if not question.mc_options or not question.mc_correct_answers:
+        await _fail_submission(db, submission, "No correct answers configured for this question")
+        return
+
+    def decode_values(raw: str, separator: str) -> list:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = raw.splitlines() if separator == "\n" else raw.replace(";", ",").split(",")
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, str):
+            return [parsed]
+        raise ValueError("Expected a list")
+
+    try:
+        options = decode_values(question.mc_options, "\n")
+        correct_answers = decode_values(question.mc_correct_answers, ",")
+        if (
+            not all(isinstance(option, str) and option.strip() for option in options)
+            or not all(isinstance(answer, str) for answer in correct_answers)
+        ):
+            raise ValueError("Invalid multiple-choice configuration")
+    except (ValueError, TypeError):
+        await _fail_submission(db, submission, "Invalid correct answers configuration")
+        return
+
+    valid_letters = {chr(ord("A") + index) for index in range(len(options))}
+    normalized_correct = [answer.strip().upper() for answer in correct_answers]
+    if (
+        len(options) < 2
+        or not normalized_correct
+        or len(normalized_correct) != len(set(normalized_correct))
+        or any(answer not in valid_letters for answer in normalized_correct)
+        or (not question.mc_allow_multiple and len(normalized_correct) != 1)
+    ):
+        await _fail_submission(db, submission, "Invalid correct answers configuration")
+        return
+
+    student_answer_raw = (submission.source_code or "").strip()
+    try:
+        student_answers = decode_values(student_answer_raw, ",") if student_answer_raw else []
+        if not all(isinstance(answer, str) for answer in student_answers):
+            raise ValueError("Invalid answer")
+    except (ValueError, TypeError):
+        student_answers = []
+
+    normalized_student = [answer.strip().upper() for answer in student_answers]
+    passed = (
+        bool(normalized_student)
+        and len(normalized_student) == len(set(normalized_student))
+        and all(answer in valid_letters for answer in normalized_student)
+        and (question.mc_allow_multiple or len(normalized_student) == 1)
+        and sorted(normalized_student) == sorted(normalized_correct)
+    )
+
+    submission.status = SubmissionStatus.completed
+    submission.score = question.max_score if passed else 0.0
+    submission.graded_at = datetime.now(timezone.utc)
+    db.commit()
+    await publish_submission_event("submission.completed", submission.id)
+
+
+async def _grade_short_answer(
+    db: Session,
+    submission: Submission,
+    question: Question,
+) -> None:
+    """Grade a short-answer submission by case-insensitive comparison.
+
+    The student's answer (in submission.source_code) is compared against
+    the question's short_answer field after trimming both.
+    """
+    if not question.short_answer:
+        await _fail_submission(db, submission, "No expected answer configured for this question")
+        return
+
+    student_answer = (submission.source_code or "").strip()
+    expected_answer = question.short_answer.strip()
+
+    passed = student_answer.lower() == expected_answer.lower()
+
+    submission.status = SubmissionStatus.completed
+    submission.score = question.max_score if passed else 0.0
+    submission.graded_at = datetime.now(timezone.utc)
+    db.commit()
+    await publish_submission_event("submission.completed", submission.id)
 
 
 def _create_test_result(

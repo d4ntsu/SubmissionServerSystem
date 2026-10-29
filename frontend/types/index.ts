@@ -23,7 +23,7 @@ export interface Exam {
   has_password?: boolean;
 }
 
-export type QuestionType = "STDIN_STDOUT" | "JAVA_CLASS_METHOD";
+export type QuestionType = "STDIN_STDOUT" | "JAVA_CLASS_METHOD" | "MULTIPLE_CHOICE" | "SHORT_ANSWER";
 export type CodingLanguage = "java" | "python";
 
 export interface Question {
@@ -42,6 +42,10 @@ export interface Question {
   return_type?: string | null;
   parameter_types?: string | null;
   show_result_to_student?: boolean;
+  mc_options?: string[] | null;
+  mc_correct_answers?: string[] | null;
+  mc_allow_multiple?: boolean;
+  short_answer?: string | null;
 }
 
 export interface TestCase {

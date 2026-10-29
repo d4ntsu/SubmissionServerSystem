@@ -644,6 +644,10 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       return_type: data.return_type || "int",
       parameter_types: data.parameter_types ?? "int, int",
       show_result_to_student: data.show_result_to_student ?? true,
+      mc_options: data.mc_options,
+      mc_correct_answers: data.mc_correct_answers,
+      mc_allow_multiple: data.mc_allow_multiple ?? false,
+      short_answer: data.short_answer,
     };
 
       if (token) {
@@ -661,6 +665,11 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
               ? `${newQ.method_name}(${newQ.parameter_types ?? "int, int"}): ${newQ.return_type || "int"}`
               : null,
             method_mode: newQ.method_mode || "STATIC",
+            mc_options: newQ.mc_options,
+            mc_correct_answers: newQ.mc_correct_answers,
+            mc_allow_multiple: newQ.mc_allow_multiple,
+            short_answer: newQ.short_answer,
+            show_result_to_student: newQ.show_result_to_student,
           },
           token
         );
@@ -730,6 +739,11 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
             ? `${updatedQuestion.method_name}(${updatedQuestion.parameter_types ?? ""}): ${updatedQuestion.return_type || "int"}`
             : null,
           method_mode: updatedQuestion.method_mode || "STATIC",
+          mc_options: updatedQuestion.mc_options,
+          mc_correct_answers: updatedQuestion.mc_correct_answers,
+          mc_allow_multiple: updatedQuestion.mc_allow_multiple,
+          short_answer: updatedQuestion.short_answer,
+          show_result_to_student: updatedQuestion.show_result_to_student,
         },
         token
       );
@@ -857,7 +871,11 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       question_title: data.question_title,
       exam_id: data.exam_id,
       exam_title: data.exam_title,
-      language: question?.language || data.language,
+      language:
+        question?.question_type === "MULTIPLE_CHOICE" ||
+        question?.question_type === "SHORT_ANSWER"
+          ? "plaintext"
+          : question?.language || data.language,
       source_code: data.source_code,
       status: "queued",
       score: null,
@@ -904,9 +922,14 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       if (token) {
         let backendSubmissionId: number | null = null;
         try {
+          const subLanguage =
+            question.question_type === "MULTIPLE_CHOICE" ||
+            question.question_type === "SHORT_ANSWER"
+              ? "plaintext"
+              : question.language;
           const realSubId = await submitCodeRequest(
             data.question_id,
-            question.language,
+            subLanguage,
             data.source_code,
             token
           );
@@ -941,7 +964,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
               question_title: data.question_title,
               exam_id: data.exam_id,
               exam_title: data.exam_title,
-              language: question.language,
+              language: subLanguage,
               source_code: data.source_code,
               status: result.submission.status as Submission["status"],
               score: result.submission.score,
