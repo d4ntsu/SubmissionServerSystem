@@ -101,13 +101,17 @@ def _as_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create an account",
+    description="Public self-service registration. No existing account or access token is required.",
+)
 def register(
     data: UserCreate,
-    request: Request,
     db: Session = Depends(get_db),
 ):
-    _validate_origin(request, required=True)
     if get_user_by_username(db, data.username):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exists")
     user = User(

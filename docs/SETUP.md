@@ -84,6 +84,21 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for the API, or check [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health). The backend creates its SQLite database under `backend\data`.
 
+### Create a developer account in Swagger
+
+In Swagger, expand **POST /auth/register**, select **Try it out**, and submit a request such as:
+
+```json
+{
+  "username": "my_teacher",
+  "password": "choose-a-password",
+  "full_name": "My Name",
+  "role": "teacher"
+}
+```
+
+Use a username of 3–50 characters, a password of 4–100 characters, and choose `teacher` or `student` for the role. Registration is public, so no token is needed. After receiving a `201` response, use **POST /auth/login** with the same username and password to get an access token.
+
 ## 6. Start the frontend
 
 In a separate window:

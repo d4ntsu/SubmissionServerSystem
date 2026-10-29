@@ -1,9 +1,9 @@
 class TestAuthEndpoints:
-    def test_register(self, client):
+    def test_register_from_swagger_origin(self, client):
         resp = client.post("/auth/register", json={
             "username": "fresh_user", "password": "pass123",
             "full_name": "Fresh User", "role": "student",
-        })
+        }, headers={"Origin": "http://testserver"})
         assert resp.status_code == 201
         data = resp.json()
         assert data["username"] == "fresh_user"
