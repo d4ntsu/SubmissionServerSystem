@@ -34,6 +34,37 @@ import {
   ShieldCheck,
 } from "lucide-react";
 
+function getOptionLines(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((option) => option.replace(/^\s*[A-Z][.)]\s*/i, "").trim())
+    .filter(Boolean);
+}
+
+function getCorrectAnswerLetters(value: string): string[] {
+  return value
+    .split(/[,;]/)
+    .map((answer) => answer.trim().toUpperCase())
+    .filter(Boolean);
+}
+
+function getStoredStringList(value: unknown, separator: string): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === "string");
+  }
+  if (typeof value !== "string") return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      return parsed.filter((item): item is string => typeof item === "string");
+    }
+    if (typeof parsed === "string") return [parsed];
+  } catch {
+    return value.split(separator);
+  }
+  return [];
+}
+
 export default function TeacherQuestionsManagementPage() {
   const params = useParams();
   const examId = Number(params?.id) || 1;
@@ -90,6 +121,10 @@ export default function TeacherQuestionsManagementPage() {
   const [qMethodMode, setQMethodMode] = useState<"STATIC" | "INSTANCE">("STATIC");
   const [qReturnType, setQReturnType] = useState("int");
   const [qParamTypes, setQParamTypes] = useState("int, int");
+  const [qMcOptions, setQMcOptions] = useState("");
+  const [qMcCorrectAnswers, setQMcCorrectAnswers] = useState("");
+  const [qMcAllowMultiple, setQMcAllowMultiple] = useState(false);
+  const [qShortAnswer, setQShortAnswer] = useState("");
 
   // Modal State for Test Case creation
   const [isTestCaseModalOpen, setIsTestCaseModalOpen] = useState(false);
@@ -120,28 +155,36 @@ export default function TeacherQuestionsManagementPage() {
     setQMethodMode("STATIC");
     setQReturnType("int");
     setQParamTypes("int, int");
+    setQMcOptions("");
+    setQMcCorrectAnswers("");
+    setQMcAllowMultiple(false);
+    setQShortAnswer("");
     setIsQuestionModalOpen(true);
   };
 
-  const openEditQuestion = (q: Question) => {
-    setEditingQuestion(q);
-    setQuestionFormError("");
-    setQTitle(q.title);
-    setQDesc(q.description);
-    setQBoilerplate(q.boilerplate ?? "");
-    setQuestionError("");
-    setQPoints(q.points);
-    setQType(q.question_type);
-    setQLanguage(q.language || "java");
-    setQTimeLimit(q.time_limit);
-    setQShowResult(q.show_result_to_student ?? true);
-    setQClassName(q.class_name || "Solution");
-    setQMethodName(q.method_name || "solve");
-    setQMethodMode(q.method_mode || "STATIC");
-    setQReturnType(q.return_type || "int");
-    setQParamTypes(q.parameter_types ?? "");
-    setIsQuestionModalOpen(true);
-  };
+    const openEditQuestion = (q: Question) => {
+      setEditingQuestion(q);
+      setQuestionFormError("");
+      setQTitle(q.title);
+      setQDesc(q.description);
+      setQBoilerplate(q.boilerplate ?? "");
+      setQuestionError("");
+      setQPoints(q.points);
+      setQType(q.question_type);
+      setQLanguage(q.language || "java");
+      setQTimeLimit(q.time_limit);
+      setQShowResult(q.show_result_to_student ?? true);
+      setQClassName(q.class_name || "Solution");
+      setQMethodName(q.method_name || "solve");
+      setQMethodMode(q.method_mode || "STATIC");
+      setQReturnType(q.return_type || "int");
+      setQParamTypes(q.parameter_types ?? "");
+      setQMcOptions(getStoredStringList(q.mc_options, "\n").join("\n"));
+      setQMcCorrectAnswers(getStoredStringList(q.mc_correct_answers, ",").join(", "));
+      setQMcAllowMultiple(q.mc_allow_multiple ?? false);
+      setQShortAnswer(q.short_answer ?? "");
+      setIsQuestionModalOpen(true);
+    };
 
   const handleSaveQuestion = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -149,12 +192,45 @@ export default function TeacherQuestionsManagementPage() {
     setQuestionError("");
     setQuestionFormError("");
 
+    const options = getOptionLines(qMcOptions);
+    const correctAnswers = getCorrectAnswerLetters(qMcCorrectAnswers);
+    if (qType === "MULTIPLE_CHOICE") {
+      const validLetters = new Set(
+        options.map((_, index) => String.fromCharCode(65 + index))
+      );
+      if (options.length < 2) {
+        setQuestionError("Enter at least two answer options, one per line.");
+        return;
+      }
+      if (options.length > 26) {
+        setQuestionError("Multiple-choice questions can have at most 26 options.");
+        return;
+      }
+      if (!correctAnswers.length || correctAnswers.some((answer) => !validLetters.has(answer))) {
+        setQuestionError("Correct answers must use the option letters shown (A, B, C...).");
+        return;
+      }
+      if (new Set(correctAnswers).size !== correctAnswers.length) {
+        setQuestionError("Do not enter the same correct answer letter more than once.");
+        return;
+      }
+      if (!qMcAllowMultiple && correctAnswers.length !== 1) {
+        setQuestionError("Single-answer questions must have exactly one correct option.");
+        return;
+      }
+    }
+    if (qType === "SHORT_ANSWER" && !qShortAnswer.trim()) {
+      setQuestionError("Enter the expected short answer.");
+      return;
+    }
+
     try {
       if (editingQuestion) {
         await updateQuestion(examId, editingQuestion.id, {
           title: qTitle,
           description: qDesc,
-          boilerplate: qBoilerplate,
+          boilerplate:
+            qType === "STDIN_STDOUT" || qType === "JAVA_CLASS_METHOD" ? qBoilerplate : "",
           points: Number(qPoints),
           question_type: qType,
           language: qType === "JAVA_CLASS_METHOD" ? "java" : qLanguage,
@@ -165,12 +241,17 @@ export default function TeacherQuestionsManagementPage() {
           method_mode: qType === "JAVA_CLASS_METHOD" ? qMethodMode : null,
           return_type: qType === "JAVA_CLASS_METHOD" ? qReturnType : null,
           parameter_types: qType === "JAVA_CLASS_METHOD" ? qParamTypes : null,
+          mc_options: qType === "MULTIPLE_CHOICE" ? options : null,
+          mc_correct_answers: qType === "MULTIPLE_CHOICE" ? correctAnswers : null,
+          mc_allow_multiple: qType === "MULTIPLE_CHOICE" ? qMcAllowMultiple : false,
+          short_answer: qType === "SHORT_ANSWER" ? qShortAnswer : null,
         });
       } else {
         await createQuestion(examId, {
           title: qTitle,
           description: qDesc,
-          boilerplate: qBoilerplate,
+          boilerplate:
+            qType === "STDIN_STDOUT" || qType === "JAVA_CLASS_METHOD" ? qBoilerplate : "",
           points: Number(qPoints),
           question_type: qType,
           language: qType === "JAVA_CLASS_METHOD" ? "java" : qLanguage,
@@ -181,6 +262,10 @@ export default function TeacherQuestionsManagementPage() {
           method_mode: qType === "JAVA_CLASS_METHOD" ? qMethodMode : null,
           return_type: qType === "JAVA_CLASS_METHOD" ? qReturnType : null,
           parameter_types: qType === "JAVA_CLASS_METHOD" ? qParamTypes : null,
+          mc_options: qType === "MULTIPLE_CHOICE" ? options : null,
+          mc_correct_answers: qType === "MULTIPLE_CHOICE" ? correctAnswers : null,
+          mc_allow_multiple: qType === "MULTIPLE_CHOICE" ? qMcAllowMultiple : false,
+          short_answer: qType === "SHORT_ANSWER" ? qShortAnswer : null,
         });
       }
       setIsQuestionModalOpen(false);
@@ -387,6 +472,9 @@ export default function TeacherQuestionsManagementPage() {
                 const qTestCases = testCases[question.id] || [];
                 const sampleCount = qTestCases.filter((tc) => tc.is_sample).length;
                 const hiddenCount = qTestCases.filter((tc) => !tc.is_sample).length;
+                const isCodingQuestion =
+                  question.question_type === "STDIN_STDOUT" ||
+                  question.question_type === "JAVA_CLASS_METHOD";
 
                 return (
                   <div
@@ -438,10 +526,14 @@ export default function TeacherQuestionsManagementPage() {
                     <div className="p-5 space-y-4 text-xs font-sans">
                       {/* Resource limits */}
                       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-slate-50 p-2.5 rounded border border-slate-200 font-mono text-[11px] text-slate-600">
-                        <div>Time Limit: <strong className="text-slate-800">{question.time_limit}s</strong></div>
-                        <div>Language: <strong className="text-slate-800 uppercase">{question.language}</strong></div>
-                        <div>Sample Tests: <strong className="text-slate-800">{sampleCount}</strong></div>
-                        <div>Hidden Tests: <strong className="text-slate-800">{hiddenCount}</strong></div>
+                        {isCodingQuestion && (
+                          <>
+                            <div>CPU Limit: <strong className="text-slate-800">{question.time_limit}s</strong></div>
+                            <div>Language: <strong className="text-slate-800 uppercase">{question.language}</strong></div>
+                            <div>Sample Tests: <strong className="text-slate-800">{sampleCount}</strong></div>
+                            <div>Hidden Tests: <strong className="text-slate-800">{hiddenCount}</strong></div>
+                          </>
+                        )}
                         <div>
                           Results:{" "}
                           <strong className={question.show_result_to_student === false ? "text-red-600" : "text-emerald-600"}>
@@ -452,23 +544,31 @@ export default function TeacherQuestionsManagementPage() {
 
                       {(() => {
                         const hasMissingAnswer =
-                          qTestCases.length === 0 ||
-                          qTestCases.some((testCase) =>
-                            question.question_type === "JAVA_CLASS_METHOD"
-                              ? !testCase.expected_return?.trim()
-                              : !testCase.expected_stdout?.trim()
-                          );
+                          question.question_type === "MULTIPLE_CHOICE"
+                            ? !question.mc_options?.length || !question.mc_correct_answers?.length
+                            : question.question_type === "SHORT_ANSWER"
+                              ? !question.short_answer?.trim()
+                              : qTestCases.length === 0 ||
+                                qTestCases.some((testCase) =>
+                                  question.question_type === "JAVA_CLASS_METHOD"
+                                    ? !testCase.expected_return?.trim()
+                                    : !testCase.expected_stdout?.trim()
+                                );
                         if (!hasMissingAnswer) return null;
+                        const detail =
+                          question.question_type === "MULTIPLE_CHOICE"
+                            ? "Configure at least two options and the correct option letter(s)."
+                            : question.question_type === "SHORT_ANSWER"
+                              ? "Enter the expected short answer before starting the exam."
+                              : qTestCases.length === 0
+                                ? "No test cases are configured. Student submissions will fail with a grading error."
+                                : "One or more test cases have no expected answer. Add expected answers before grading.";
                         return (
                           <div className="rounded border border-amber-200 bg-amber-50 p-2.5 text-[11px] text-amber-800 flex items-start gap-2">
                             <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                             <div>
                               <strong className="block">Logical grading is incomplete</strong>
-                              <span>
-                                {qTestCases.length === 0
-                                  ? "No test cases are configured. Student submissions will fail with a grading error."
-                                  : "One or more test cases have no expected answer. Those answers must be added before wrong submissions can be scored correctly."}
-                              </span>
+                              <span>{detail}</span>
                             </div>
                           </div>
                         );
@@ -495,6 +595,7 @@ export default function TeacherQuestionsManagementPage() {
                       </div>
 
                       {/* Test Cases Sub-Section */}
+                      {isCodingQuestion && (
                       <div className="space-y-2 pt-2 border-t border-slate-100">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono">
@@ -508,7 +609,6 @@ export default function TeacherQuestionsManagementPage() {
                             <span>Add Test Case</span>
                           </button>
                         </div>
-
                         <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg overflow-hidden bg-slate-50/50">
                           {qTestCases.length === 0 ? (
                             <div className="p-3 text-slate-400 italic text-[11px] text-center font-mono">
@@ -568,6 +668,7 @@ export default function TeacherQuestionsManagementPage() {
                           )}
                         </div>
                       </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -586,7 +687,7 @@ export default function TeacherQuestionsManagementPage() {
                     {editingQuestion ? "UPDATE PROBLEM SPECIFICATION" : "NEW QUESTION DESIGN"}
                   </span>
                   <h3 className="text-sm font-bold text-slate-900">
-                    {editingQuestion ? `Edit Question: ${editingQuestion.title}` : "Create Programming Question"}
+                    {editingQuestion ? `Edit Question: ${editingQuestion.title}` : "Create Question"}
                   </h3>
                 </div>
                 <button
@@ -678,9 +779,46 @@ export default function TeacherQuestionsManagementPage() {
                         Invokes specific Java methods and tests return values directly.
                       </p>
                     </button>
-                  </div>
-                </div>
 
+                                    <button
+                                      type="button"
+                                      onClick={() => setQType("MULTIPLE_CHOICE")}
+                                      className={`p-3 rounded border text-left transition-all ${
+                                        qType === "MULTIPLE_CHOICE"
+                                          ? "border-orange-500 bg-orange-50/50 shadow-xs"
+                                          : "border-slate-200 bg-slate-50 hover:bg-slate-100"
+                                      }`}
+                                    >
+                                      <div className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                                        <Layers className="w-3.5 h-3.5 text-orange-500" />
+                                        Multiple Choice
+                                      </div>
+                                      <p className="text-[11px] text-slate-500 mt-0.5">
+                                        Students select one or more correct answers from a list of options.
+                                      </p>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => setQType("SHORT_ANSWER")}
+                                      className={`p-3 rounded border text-left transition-all ${
+                                        qType === "SHORT_ANSWER"
+                                          ? "border-orange-500 bg-orange-50/50 shadow-xs"
+                                          : "border-slate-200 bg-slate-50 hover:bg-slate-100"
+                                      }`}
+                                    >
+                                      <div className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                                        <Edit2 className="w-3.5 h-3.5 text-orange-500" />
+                                        Short Answer
+                                      </div>
+                                      <p className="text-[11px] text-slate-500 mt-0.5">
+                                        Students type a short text answer; graded by case-insensitive match.
+                                      </p>
+                                    </button>
+                                  </div>
+                                </div>
+
+                {(qType === "STDIN_STDOUT" || qType === "JAVA_CLASS_METHOD") && (
                 <div>
                   <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
                     Programming Language (locked for students) *
@@ -699,6 +837,7 @@ export default function TeacherQuestionsManagementPage() {
                     questions always use Java.
                   </p>
                 </div>
+                )}
 
                 {/* Java Method Spec Fields if JAVA_CLASS_METHOD */}
                 {qType === "JAVA_CLASS_METHOD" && (
@@ -768,45 +907,125 @@ export default function TeacherQuestionsManagementPage() {
                   </div>
                 )}
 
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
-                    Student Boilerplate
-                  </label>
-                  <textarea
-                    rows={10}
-                    spellCheck={false}
-                    value={qBoilerplate}
-                    onChange={(e) => setQBoilerplate(e.target.value)}
-                    placeholder="Optional starter code shown to students. Leave blank for an empty editor."
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded text-slate-900 resize-y font-mono text-xs leading-relaxed"
-                  />
-                  <p className="mt-1 text-[10px] text-slate-500">
-                    Students receive this code on first open and when they Reset. Existing student
-                    code is preserved.{" "}
-                    {qType === "JAVA_CLASS_METHOD" &&
-                      "The grader generates a hidden Main.java runner; provide only the class and method here."}
-                  </p>
-                </div>
+                                {/* Multiple Choice Config Fields */}
+                                {qType === "MULTIPLE_CHOICE" && (
+                                  <div className="p-4 bg-slate-50 rounded-lg border border-slate-200 space-y-3 font-mono">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                                      Multiple Choice Configuration:
+                                    </span>
+                                    <div>
+                                      <label className="block text-[10px] text-slate-500 font-bold mb-1">
+                                        Answer Options (one per line)
+                                      </label>
+                                      <textarea
+                                        rows={6}
+                                        value={qMcOptions}
+                                        onChange={(e) => setQMcOptions(e.target.value)}
+                                        placeholder={"Paris\nLondon\nBerlin\nMadrid"}
+                                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded text-xs font-mono"
+                                      />
+                                      <p className="mt-1 text-[10px] text-slate-500">
+                                        Students see these choices labeled A, B, C, and so on.
+                                      </p>
+                                    </div>
+                                    <label className="flex items-start gap-2 text-[11px] text-slate-700">
+                                      <input
+                                        type="checkbox"
+                                        checked={qMcAllowMultiple}
+                                        onChange={(event) => setQMcAllowMultiple(event.target.checked)}
+                                        className="mt-0.5 accent-orange-500"
+                                      />
+                                      <span>
+                                        Allow selecting multiple answers
+                                        <span className="block text-[10px] text-slate-500">
+                                          When enabled, students must select all correct options.
+                                        </span>
+                                      </span>
+                                    </label>
+                                    <div>
+                                      <label className="block text-[10px] text-slate-500 font-bold mb-1">
+                                        Correct Option Letter(s)
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={qMcCorrectAnswers}
+                                        onChange={(e) => setQMcCorrectAnswers(e.target.value)}
+                                        placeholder={qMcAllowMultiple ? "e.g. A, C" : "e.g. A"}
+                                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded"
+                                      />
+                                      <p className="mt-1 text-[10px] text-slate-500">
+                                        Separate letters with commas when multiple selection is enabled.
+                                      </p>
+                                    </div>
+                                  </div>
+                                )}
 
-                {/* Resource Limits */}
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
-                    CPU Time Limit (Seconds) *
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    min={1}
-                    max={10}
-                    value={qTimeLimit}
-                    onChange={(e) => setQTimeLimit(Number(e.target.value))}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded text-slate-900 font-mono"
-                  />
-                  <p className="mt-1 text-[10px] text-slate-400">
-                    Memory limits are managed automatically by the execution sandbox and are no
-                    longer configured per question.
-                  </p>
-                </div>
+                                {/* Short Answer Config Field */}
+                                {qType === "SHORT_ANSWER" && (
+                                  <div className="p-4 bg-slate-50 rounded-lg border border-slate-200 space-y-3 font-mono">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                                      Short Answer Configuration:
+                                    </span>
+                                    <div>
+                                      <label className="block text-[10px] text-slate-500 font-bold mb-1">
+                                        Expected Answer (case-insensitive comparison)
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={qShortAnswer}
+                                        onChange={(e) => setQShortAnswer(e.target.value)}
+                                        placeholder="e.g. 42"
+                                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded"
+                                      />
+                                      <p className="mt-1 text-[10px] text-slate-500">
+                                        The student's answer is compared case-insensitively. Leading/trailing whitespace is ignored.
+                                      </p>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {(qType === "STDIN_STDOUT" || qType === "JAVA_CLASS_METHOD") && (
+                                  <div>
+                                    <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
+                                      Student Boilerplate
+                                    </label>
+                                    <textarea
+                                      rows={10}
+                                      spellCheck={false}
+                                      value={qBoilerplate}
+                                      onChange={(e) => setQBoilerplate(e.target.value)}
+                                      placeholder="Optional starter code shown to students. Leave blank for an empty editor."
+                                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded text-slate-900 resize-y font-mono text-xs leading-relaxed"
+                                    />
+                                    <p className="mt-1 text-[10px] text-slate-500">
+                                      Students receive this code on first open and when they Reset. Existing student
+                                      code is preserved.{" "}
+                                      {qType === "JAVA_CLASS_METHOD" &&
+                                        "The grader generates a hidden Main.java runner; provide only the class and method here."}
+                                    </p>
+                                  </div>
+                                )}
+
+                                {(qType === "STDIN_STDOUT" || qType === "JAVA_CLASS_METHOD") && (
+                                  <div>
+                                    <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
+                                      CPU Time Limit (Seconds) *
+                                    </label>
+                                    <input
+                                      type="number"
+                                      required
+                                      min={1}
+                                      max={10}
+                                      value={qTimeLimit}
+                                      onChange={(e) => setQTimeLimit(Number(e.target.value))}
+                                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded text-slate-900 font-mono"
+                                    />
+                                    <p className="mt-1 text-[10px] text-slate-400">
+                                      Memory limits are managed automatically by the execution sandbox and are no
+                                      longer configured per question.
+                                    </p>
+                                  </div>
+                                )}
 
                 {/* Result Visibility */}
                 <div className="flex items-center justify-between p-3 bg-slate-50 rounded border border-slate-200">
@@ -821,7 +1040,7 @@ export default function TeacherQuestionsManagementPage() {
                         Show Final Result to Student
                       </span>
                       <span className="text-[10px] text-slate-500">
-                        When disabled, students can submit code but cannot view the score, verdict, or test breakdown for this question.
+                        When disabled, students can submit answers but cannot view the score, verdict, or result details for this question.
                       </span>
                     </div>
                   </div>
@@ -836,14 +1055,14 @@ export default function TeacherQuestionsManagementPage() {
                 {/* Markdown Description */}
                 <div>
                   <label className="block text-[11px] font-bold text-slate-600 uppercase font-mono mb-1">
-                    Problem Requirements & Constraints (Markdown Supported) *
+                    Question Text (Markdown Supported) *
                   </label>
                   <textarea
                     rows={6}
                     required
                     value={qDesc}
                     onChange={(e) => setQDesc(e.target.value)}
-                    placeholder={"Write detailed problem explanation, input format, and output specifications...\n\nMarkdown is supported: **bold**, `inline code`, - bullet lists, ### headings, tables, and $...$ for math."}
+                    placeholder={"Write the question prompt here...\n\nMarkdown is supported: **bold**, `inline code`, - bullet lists, ### headings, tables, and $...$ for math."}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded text-slate-900 resize-none font-sans font-mono text-[11px] leading-relaxed"
                   />
                   <p className="mt-1 text-[10px] text-slate-400">
