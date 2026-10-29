@@ -1,5 +1,6 @@
 """Run the real grader for a teacher's exam preview without persisting submissions."""
 
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -71,6 +72,12 @@ async def grade_question_preview(
     collector = _PreviewSession()
 
     if not test_cases:
+        if question.question_type == QuestionType.multiple_choice:
+            _grade_mc_preview(submission, question)
+            return PreviewGradeOutcome(submission, test_cases, collector.added)
+        if question.question_type == QuestionType.short_answer:
+            _grade_sa_preview(submission, question)
+            return PreviewGradeOutcome(submission, test_cases, collector.added)
         _mark_error(submission, "No test cases configured for this question")
         return PreviewGradeOutcome(submission, test_cases, collector.added)
 
@@ -132,3 +139,85 @@ async def grade_question_preview(
         _mark_error(submission, "Unsupported question type")
 
     return PreviewGradeOutcome(submission, test_cases, collector.added)
+
+
+def _grade_mc_preview(
+    submission: Submission,
+    question: Question,
+) -> None:
+    """Grade a multiple-choice answer in preview (no db writes, no events)."""
+    if not question.mc_options or not question.mc_correct_answers:
+        _mark_error(submission, "No correct answers configured for this question")
+        return
+
+    def decode_values(raw: str, separator: str) -> list:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = raw.splitlines() if separator == "\n" else raw.replace(";", ",").split(",")
+        if isinstance(parsed, list):
+            return parsed
+        raise ValueError("Invalid answer format")
+
+    try:
+        options = decode_values(question.mc_options, "\n")
+        correct_answers = decode_values(question.mc_correct_answers, ",")
+        if (
+            not all(isinstance(opt, str) and opt.strip() for opt in options)
+            or not all(isinstance(ans, str) for ans in correct_answers)
+        ):
+            raise ValueError("Invalid multiple-choice configuration")
+    except (ValueError, TypeError):
+        _mark_error(submission, "Invalid correct answers configuration")
+        return
+
+    valid_letters = {chr(ord("A") + idx) for idx in range(len(options))}
+    normalized_correct = [ans.strip().upper() for ans in correct_answers]
+    if (
+        len(options) < 2
+        or not normalized_correct
+        or len(normalized_correct) != len(set(normalized_correct))
+        or any(ans not in valid_letters for ans in normalized_correct)
+        or (not question.mc_allow_multiple and len(normalized_correct) != 1)
+    ):
+        _mark_error(submission, "Invalid correct answers configuration")
+        return
+
+    student_answer_raw = (submission.source_code or "").strip()
+    try:
+        student_answers = decode_values(student_answer_raw, ",") if student_answer_raw else []
+        if not all(isinstance(ans, str) for ans in student_answers):
+            raise ValueError("Invalid answer")
+    except (ValueError, TypeError):
+        student_answers = []
+
+    normalized_student = [ans.strip().upper() for ans in student_answers]
+    passed = (
+        bool(normalized_student)
+        and len(normalized_student) == len(set(normalized_student))
+        and all(ans in valid_letters for ans in normalized_student)
+        and (question.mc_allow_multiple or len(normalized_student) == 1)
+        and sorted(normalized_student) == sorted(normalized_correct)
+    )
+
+    submission.status = SubmissionStatus.completed
+    submission.score = question.max_score if passed else 0.0
+    submission.graded_at = datetime.now(timezone.utc)
+
+
+def _grade_sa_preview(
+    submission: Submission,
+    question: Question,
+) -> None:
+    """Grade a short-answer by case-insensitive comparison (no db writes, no events)."""
+    if not question.short_answer:
+        _mark_error(submission, "No expected answer configured for this question")
+        return
+
+    student_answer = (submission.source_code or "").strip()
+    expected_answer = question.short_answer.strip()
+    passed = student_answer.lower() == expected_answer.lower()
+
+    submission.status = SubmissionStatus.completed
+    submission.score = question.max_score if passed else 0.0
+    submission.graded_at = datetime.now(timezone.utc)

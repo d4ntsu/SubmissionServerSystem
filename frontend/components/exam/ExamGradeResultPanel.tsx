@@ -112,63 +112,48 @@ export function ExamGradeResultPanel({
 
       <div className="divide-y divide-slate-100">
         {result.questions.map((question, questionIndex) => {
-          const passed = question.test_results.filter((test) => test.passed === 1).length;
-          const isError = question.status === "error";
+                  const isError = question.status === "error";
+                  const isCorrect = !isError && question.score !== null && question.score > 0;
+                  const iconBg = isError || (!isCorrect && !isError)
+                    ? "bg-red-50 border-red-200 text-red-600"
+                    : "bg-emerald-50 border-emerald-200 text-emerald-600";
+                  const Icon = isError
+                    ? XCircle
+                    : question.score !== null && question.score > 0
+                    ? CheckCircle2
+                    : XCircle;
 
-          return (
-            <article key={question.question_id} className="p-4 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div className="flex items-start gap-2.5 min-w-0">
-                  <span
-                    className={`shrink-0 flex h-6 w-6 items-center justify-center rounded-full border ${
-                      isError
-                        ? "bg-red-50 border-red-200 text-red-600"
-                        : "bg-emerald-50 border-emerald-200 text-emerald-600"
-                    }`}
-                  >
-                    {isError ? (
-                      <XCircle className="w-3.5 h-3.5" />
-                    ) : (
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                    )}
-                  </span>
-                  <div className="min-w-0">
-                    <h3 className="text-xs font-bold text-slate-900 truncate">
-                      Q{questionIndex + 1}: {question.title}
-                    </h3>
-                    <p className="text-[10px] font-mono text-slate-500 mt-0.5">
-                      {isError
-                        ? "Grading error"
-                        : `${passed}/${question.test_results.length} test cases passed`}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 shrink-0 sm:justify-end">
-                  <span className="text-[10px] font-mono text-slate-500">
-                    {question.test_results.length} test
-                    {question.test_results.length === 1 ? "" : "s"}
-                  </span>
-                  <span className="px-2.5 py-1 rounded bg-slate-50 border border-slate-200 text-xs font-black font-mono text-slate-800">
-                    {question.score === null ? "—" : question.score}
-                    <span className="text-[10px] font-bold text-slate-400"> / {question.max_score}</span>
-                  </span>
-                </div>
-              </div>
+                  return (
+                    <article key={question.question_id} className="p-4 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-start gap-2.5 min-w-0">
+                          <span
+                            className={`shrink-0 flex h-6 w-6 items-center justify-center rounded-full border ${iconBg}`}
+                          >
+                            <Icon className="w-3.5 h-3.5" />
+                          </span>
+                          <div className="min-w-0">
+                            <h3 className="text-xs font-bold text-slate-900 truncate">
+                              Q{questionIndex + 1}: {question.title}
+                            </h3>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 shrink-0 sm:justify-end">
+                          <span className="px-2.5 py-1 rounded bg-slate-50 border border-slate-200 text-xs font-black font-mono text-slate-800">
+                            {question.score === null ? "—" : question.score}
+                            <span className="text-[10px] font-bold text-slate-400"> / {question.max_score}</span>
+                          </span>
+                        </div>
+                      </div>
 
-              {question.error_summary && (
-                <div className="p-2.5 bg-red-50 border border-red-200 rounded text-[11px] text-red-800 flex items-start gap-2">
-                  <FileWarning className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  <span>{question.error_summary}</span>
-                </div>
-              )}
+                      {question.error_summary && (
+                        <div className="p-2.5 bg-red-50 border border-red-200 rounded text-[11px] text-red-800 flex items-start gap-2">
+                          <FileWarning className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                          <span>{question.error_summary}</span>
+                        </div>
+                      )}
 
-              {question.test_results.length === 0 && !question.error_summary && (
-                <p className="text-[11px] text-slate-400 italic">
-                  This question returned no test results.
-                </p>
-              )}
-
-              {question.test_results.length > 0 && (
+                      {question.test_results.length > 0 && (
                 <div className="space-y-2">
                   {question.test_results.map((test, testIndex) => (
                     <div
