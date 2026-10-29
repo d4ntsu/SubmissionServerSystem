@@ -129,30 +129,7 @@ function methodArgumentCount(argumentsText: string): number | null {
   return insideQuotes || delimiters.length > 0 ? null : count;
 }
 
-function stringValues(value: unknown, separator: string): string[] {
-  if (Array.isArray(value)) {
-    return value.filter((item): item is string => typeof item === "string");
-  }
-  if (typeof value !== "string") return [];
-  try {
-    const parsed: unknown = JSON.parse(value);
-    if (Array.isArray(parsed)) {
-      return parsed.filter((item): item is string => typeof item === "string");
-    }
-    if (typeof parsed === "string") return [parsed];
-  } catch {
-    return value.split(separator);
-  }
-  return [];
-}
-
 function expectedAnswer(question: Question, testCase: TestCase): string {
-  if (question.question_type === "MULTIPLE_CHOICE") {
-    return stringValues(question.mc_correct_answers, ",").join(", ");
-  }
-  if (question.question_type === "SHORT_ANSWER") {
-    return question.short_answer || "";
-  }
   const value =
     question.question_type === "JAVA_CLASS_METHOD"
       ? testCase.expected_return
@@ -161,26 +138,6 @@ function expectedAnswer(question: Question, testCase: TestCase): string {
 }
 
 function hasGradingContract(question: Question): boolean {
-  if (question.question_type === "MULTIPLE_CHOICE") {
-    const options = stringValues(question.mc_options, "\n");
-    const answers = stringValues(question.mc_correct_answers, ",");
-    const normalizedAnswers = answers.map((answer) => answer.trim().toUpperCase());
-    const validAnswers = new Set(
-      options.map((_, index) => String.fromCharCode(65 + index))
-    );
-    return (
-      options.length >= 2 &&
-      options.length <= 26 &&
-      options.every((option) => option.trim().length > 0) &&
-      normalizedAnswers.length > 0 &&
-      normalizedAnswers.every((answer) => validAnswers.has(answer)) &&
-      normalizedAnswers.length === new Set(normalizedAnswers).size &&
-      (question.mc_allow_multiple === true || normalizedAnswers.length === 1)
-    );
-  }
-  if (question.question_type === "SHORT_ANSWER") {
-    return Boolean(question.short_answer?.trim());
-  }
   if (question.question_type === "STDIN_STDOUT") {
     return question.language === "java" || question.language === "python";
   }
@@ -220,22 +177,12 @@ export function buildExamVerification(
 
   const questions = examQuestions.map((question): QuestionVerification => {
     const cases = testCasesByQuestion[question.id] || [];
-    const isMultipleChoice = question.question_type === "MULTIPLE_CHOICE";
-    const isShortAnswer = question.question_type === "SHORT_ANSWER";
-    const isObjectiveQuestion = isMultipleChoice || isShortAnswer;
-    const isJavaMethodQuestion = question.question_type === "JAVA_CLASS_METHOD";
-    const options = stringValues(question.mc_options, "\n");
-    const correctAnswers = stringValues(question.mc_correct_answers, ",");
-    const missingAnswers = isObjectiveQuestion
-      ? []
-      : cases.filter((testCase) => !expectedAnswer(question, testCase));
-    const invalidWeights = isObjectiveQuestion
-      ? []
-      : cases.filter(
-          (testCase) => !Number.isFinite(testCase.weight) || testCase.weight <= 0
-        );
+    const missingAnswers = cases.filter((testCase) => !expectedAnswer(question, testCase));
+    const invalidWeights = cases.filter(
+      (testCase) => !Number.isFinite(testCase.weight) || testCase.weight <= 0
+    );
     const methodArgumentsValid =
-      !isJavaMethodQuestion ||
+      question.question_type !== "JAVA_CLASS_METHOD" ||
       cases.every(
         (testCase) =>
           methodArgumentCount(testCase.arguments || "") ===
@@ -261,52 +208,25 @@ export function buildExamVerification(
     const gradingAvailable = backendGradingAvailable
       ? hasGradingContract(question)
       : localQuestionSupported;
-    const questionOptionsConfigured =
-      options.length >= 2 &&
-      options.length <= 26 &&
-      options.every((option) => option.trim().length > 0);
-    const expectedAnswersConfigured = isMultipleChoice
-      ? correctAnswers.length > 0
-      : isShortAnswer
-        ? Boolean(question.short_answer?.trim())
-        : cases.length > 0 && missingAnswers.length === 0;
-    const testCasesConfigured = isObjectiveQuestion || cases.length > 0;
-    const scoreWeightsValid = isObjectiveQuestion
-      ? question.points > 0
-      : cases.length > 0 &&
-        invalidWeights.length === 0 &&
-        question.points > 0;
 
     const checks: VerificationCheck[] = [
       {
         label: "Test cases configured",
-        passed: isMultipleChoice ? questionOptionsConfigured : testCasesConfigured,
-        detail: isMultipleChoice
-          ? questionOptionsConfigured
-            ? `${options.length} answer options configured`
-            : "Configure 2 to 26 non-empty answer options"
-          : isShortAnswer
-            ? "Short-answer grading does not use programming test cases"
-            : cases.length > 0
-              ? `${cases.length} test case${cases.length === 1 ? "" : "s"} found`
-              : "Add at least one test case to this question",
+        passed: cases.length > 0,
+        detail:
+          cases.length > 0
+            ? `${cases.length} test case${cases.length === 1 ? "" : "s"} found`
+            : "Add at least one test case to this question",
       },
       {
         label: "Expected answers stored",
-        passed: expectedAnswersConfigured,
-        detail: isMultipleChoice
-          ? expectedAnswersConfigured
-            ? "Correct answer letters are configured"
-            : "Set the correct answer letter(s)"
-          : isShortAnswer
-            ? expectedAnswersConfigured
-              ? "Expected answer configured"
-              : "Set the expected short answer"
-            : cases.length === 0
-              ? "Add at least one test case with an expected answer"
-              : missingAnswers.length > 0
-                ? `${missingAnswers.length} test case${missingAnswers.length === 1 ? "" : "s"} missing an expected answer`
-                : "Every test case has an expected answer",
+        passed: cases.length > 0 && missingAnswers.length === 0,
+        detail:
+          cases.length === 0
+            ? "Add at least one test case with an expected answer"
+            : missingAnswers.length > 0
+              ? `${missingAnswers.length} test case${missingAnswers.length === 1 ? "" : "s"} missing an expected answer`
+              : "Every test case has an expected answer",
       },
       {
         label: "Grading configuration recognized",
@@ -315,41 +235,37 @@ export function buildExamVerification(
           ? gradingAvailable
             ? question.question_type === "JAVA_CLASS_METHOD"
               ? "Backend Java method grader and method contract are configured"
-              : question.question_type === "MULTIPLE_CHOICE"
-                ? "Multiple-choice grader is configured"
-                : question.question_type === "SHORT_ANSWER"
-                  ? "Short-answer grader is configured"
-                  : "Backend stdin/stdout grader is available"
+              : "Backend stdin/stdout grader is available"
             : "The question type or Java method contract is not supported"
           : gradingAvailable
-            ? "This question is supported by the offline demo grader"
+            ? "This seeded question is supported by the offline demo grader"
             : "Custom questions require the backend grading service; sign in with a backend account",
       },
       {
         label: "Score weights valid",
-        passed: scoreWeightsValid,
-        detail: isObjectiveQuestion
-          ? question.points > 0
-            ? "Score is valid"
-            : "Set a positive total score for this question"
-          : cases.length === 0
+        passed: cases.length > 0 && invalidWeights.length === 0 && question.points > 0,
+        detail:
+          cases.length === 0
             ? "Add test cases with positive score weights"
             : question.points <= 0
               ? "Set a positive total score for this question"
               : invalidWeights.length > 0
-                ? `${invalidWeights.length} test case${invalidWeights.length === 1 ? "" : "s"} must have a positive score weight`
-                : "Every test case has a positive score weight",
+              ? `${invalidWeights.length} test case${invalidWeights.length === 1 ? "" : "s"} must have a positive score weight`
+              : "Every test case has a positive score weight",
       },
       {
         label: "Method arguments match signature",
-        passed: !isJavaMethodQuestion || (cases.length > 0 && methodArgumentsValid),
-        detail: !isJavaMethodQuestion
-          ? "Not required for this question type"
-          : cases.length === 0
-            ? "Add method test cases matching the configured parameter count"
-            : methodArgumentsValid
-              ? "Every test case has the configured number of arguments"
-              : "A test case has malformed arguments or the wrong number of values",
+        passed:
+          question.question_type !== "JAVA_CLASS_METHOD" ||
+          (cases.length > 0 && methodArgumentsValid),
+        detail:
+          question.question_type !== "JAVA_CLASS_METHOD"
+            ? "Not required for stdin/stdout questions"
+            : cases.length === 0
+              ? "Add method test cases matching the configured parameter count"
+              : methodArgumentsValid
+                ? "Every test case has the configured number of arguments"
+                : "A test case has malformed arguments or the wrong number of values",
       },
     ];
 
@@ -358,7 +274,8 @@ export function buildExamVerification(
       title: question.title,
       points: question.points,
       passed: checks.every((check) => check.passed),
-      score: localOutcome?.status === "completed" ? localOutcome.score : null,
+      score:
+        localOutcome?.status === "completed" ? localOutcome.score : null,
       checks,
       errorSummary:
         localOutcome?.status === "error" ? localOutcome.error_summary : null,
@@ -371,9 +288,10 @@ export function buildExamVerification(
     examTitle,
     checkedAt,
     passed,
-    totalScore: !backendGradingAvailable && localDemoGradingAvailable
-      ? localDemoScore
-      : null,
+    totalScore:
+      !backendGradingAvailable && localDemoGradingAvailable
+        ? localDemoScore
+        : null,
     totalPoints: examQuestions.reduce((sum, question) => sum + question.points, 0),
     resultStatus:
       questions.length === 0 ? "no_questions" : passed ? "ready" : "needs_fixes",

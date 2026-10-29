@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.models.exam import Exam, ExamStatus
-from app.models.question import Question, QuestionType
+from app.models.question import Question
 from app.models.submission import Submission, SubmissionStatus, SubmissionTestResult
 from app.models.user import User, UserRole
 
@@ -49,12 +49,6 @@ def validate_submission(
         raise SubmissionValidationError("Exam has not started yet")
     if exam.end_time and now > exam.end_time.replace(tzinfo=timezone.utc):
         raise SubmissionValidationError("Exam has ended")
-
-    if question.question_type in (QuestionType.multiple_choice, QuestionType.short_answer):
-        return question
-
-    if question.question_type not in (QuestionType.stdio, QuestionType.java_class):
-        return question
 
     allowed = [lang.strip().lower() for lang in question.allowed_languages.split(",")]
     if language.lower() not in allowed:

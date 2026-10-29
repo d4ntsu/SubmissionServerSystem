@@ -24,12 +24,6 @@ interface QuestionSidebarProps {
 }
 
 function isQuestionConfigured(question: Question, cases: TestCase[]): boolean {
-  if (question.question_type === "MULTIPLE_CHOICE") {
-    return Boolean(question.mc_options && question.mc_options.length >= 2);
-  }
-  if (question.question_type === "SHORT_ANSWER") {
-    return true;
-  }
   if (!cases.length) return false;
   return cases.every((testCase) =>
     question.question_type === "JAVA_CLASS_METHOD"

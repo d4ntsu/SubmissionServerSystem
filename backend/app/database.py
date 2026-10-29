@@ -1,4 +1,3 @@
-import json
 import os
 
 from sqlalchemy import create_engine, event, inspect, text
@@ -70,41 +69,6 @@ def run_lightweight_migrations() -> None:
             if "boilerplate" not in columns:
                 connection.execute(
                     text("ALTER TABLE questions ADD COLUMN boilerplate TEXT NOT NULL DEFAULT ''")
-                )
-            if "mc_options" not in columns:
-                connection.execute(
-                    text("ALTER TABLE questions ADD COLUMN mc_options TEXT")
-                )
-            if "mc_correct_answers" not in columns:
-                connection.execute(
-                    text("ALTER TABLE questions ADD COLUMN mc_correct_answers TEXT")
-                )
-            if "short_answer" not in columns:
-                connection.execute(
-                    text("ALTER TABLE questions ADD COLUMN short_answer TEXT")
-                )
-            if "mc_allow_multiple" not in columns:
-                connection.execute(
-                    text("ALTER TABLE questions ADD COLUMN mc_allow_multiple BOOLEAN NOT NULL DEFAULT 0")
-                )
-                legacy_answers = connection.execute(
-                    text("SELECT id, mc_correct_answers FROM questions WHERE mc_correct_answers IS NOT NULL")
-                ).all()
-                for question_id, raw_answers in legacy_answers:
-                    try:
-                        answers = json.loads(raw_answers)
-                    except (json.JSONDecodeError, TypeError):
-                        answers = str(raw_answers).replace(";", ",").split(",")
-                    if isinstance(answers, list) and len(
-                        {str(answer).strip().upper() for answer in answers if str(answer).strip()}
-                    ) > 1:
-                        connection.execute(
-                            text("UPDATE questions SET mc_allow_multiple = 1 WHERE id = :id"),
-                            {"id": question_id},
-                        )
-            if "show_result_to_student" not in columns:
-                connection.execute(
-                    text("ALTER TABLE questions ADD COLUMN show_result_to_student BOOLEAN NOT NULL DEFAULT 1")
                 )
 
 

@@ -338,21 +338,13 @@ Optional tables may include `announcements`, `audit_logs`, and `grading_jobs`. A
 
 ## 8. Java Class/Method Grading with Reflection
 
-The system needs to support four question types:
+The system needs to support at least two question types:
 
 ### Type A: Standard input/output
 The student writes a program that reads input and prints output. The grader runs it against test cases and compares normalized output according to a documented policy.
 
 ### Type B: Java class/method
 The question specifies a required class and method. For example, a question may require a `Calculator` class with an `add(int, int)` method.
-
-### Type C: Multiple choice
-Teachers provide at least two answer options and mark the correct option letter or letters. The question explicitly records whether students may select one answer or select all that apply. Single-answer questions use radio buttons; select-all questions use checkboxes. Grading compares the submitted selection with the exact correct set, rejecting duplicate and out-of-range selections. Objective submissions are persisted and graded by the backend without test cases or Piston execution.
-
-### Type D: Short answer
-Teachers provide a private expected answer. Students see the question text above a short text field. Grading trims leading and trailing whitespace and compares the answer case-insensitively.
-
-For both objective types, the student question API returns only the information needed to answer the question. Correct option letters and expected short-answer text remain teacher/grader-only. Result visibility is configurable and stored with the question.
 
 The Java grading flow:
 1. Keep the required class name, method name, parameter types, return type, and invocation mode in server-side question configuration.

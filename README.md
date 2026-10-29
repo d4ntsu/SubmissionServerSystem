@@ -32,9 +32,6 @@ For the full architecture and phased implementation plan, see [`docs/README_LAN_
 
 ### Exam-Taking Experience
 
-- Multiple-choice questions render labeled options as radio buttons for one answer or checkboxes for select-all questions; students never receive the correct-answer key.
-- Short-answer questions show the prompt above a text field and are graded by trimmed, case-insensitive exact match.
-- Objective questions do not show programming-language, starter-code, CPU-limit, sample-run, or test-case controls. Their submissions are persisted and graded without Piston.
 - Teachers can protect an exam with an **entry password**.
 - Students must unlock a protected exam before the question window opens.
 - Teachers preview protected exams without entering the password.
@@ -53,8 +50,6 @@ For the full architecture and phased implementation plan, see [`docs/README_LAN_
 
 ### Teacher Tools
 
-- Teachers can author multiple-choice questions with at least two options, an explicit single-answer or select-all mode, and the correct option letter(s). Short-answer questions use a teacher-only expected answer.
-- Objective questions retain points, question text, and result-visibility settings, while hiding coding-only configuration and test cases.
 - Exam creation and editing includes a password-protection toggle.
 - Password-protected exams show a lock badge in the teacher exam list.
 - Question creation includes a language selector (`Java` or `Python`).
@@ -84,9 +79,6 @@ The demo frontend now persists its state in `localStorage`:
 
 ### Backend Changes
 
-- Multiple-choice options and answer keys use validated arrays. Student question responses include the options and selection mode but omit both multiple-choice and short-answer keys; the owning teacher can still edit and inspect them.
-- Objective submissions are accepted without test cases or a programming language and are graded by the backend without invoking Piston. Multiple-choice grading requires the exact configured set and rejects duplicate or out-of-range selections.
-- Lightweight SQLite migrations add the multiple-selection and result-visibility fields to existing question tables.
 - Added exam password storage and verification:
   - `Exam.access_password_hash` stores a bcrypt hash.
   - `Exam.has_password` is exposed in exam responses.

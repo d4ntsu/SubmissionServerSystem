@@ -7,8 +7,8 @@ from app.models.submission import SubmissionStatus
 
 class SubmissionCreate(BaseModel):
     question_id: int
-    language: str = Field(default="plaintext", max_length=20)
-    source_code: str = Field(..., min_length=0)
+    language: str = Field(..., min_length=1, max_length=20)
+    source_code: str = Field(..., min_length=1)
 
 
 class SubmissionResponse(BaseModel):
