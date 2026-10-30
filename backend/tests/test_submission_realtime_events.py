@@ -423,7 +423,7 @@ def test_completed_event_has_safe_payload_and_realtime_failure_keeps_commit(
         db.close()
         raise RuntimeError("simulated socket outage")
 
-    monkeypatch.setattr(grading_service, "PistonClient", FakeExecutor)
+    monkeypatch.setattr(grading_service, "LocalRunner", FakeExecutor)
     monkeypatch.setattr(submission_events, "_event_sender", fail_delivery)
     asyncio.run(grading_service.grade_submission(submission_id))
 
@@ -439,7 +439,7 @@ def test_completed_event_has_safe_payload_and_realtime_failure_keeps_commit(
             assert state_at_delivery == SubmissionStatus.completed
             assert "source_code" not in event["payload"]
             assert "score" not in event["payload"]
-            assert "Piston" not in str(event)
+            assert "Runner" not in str(event)
     finally:
         db.close()
 
@@ -460,9 +460,9 @@ def test_failed_event_is_normalized_and_omits_executor_details(submission_contex
             return None
 
         async def execute(self, **_kwargs):
-            from app.services.piston_client import PistonClientError
+            from app.services.local_runner import LocalRunnerError
 
-            raise PistonClientError("private Piston and Docker diagnostics")
+            raise LocalRunnerError("private runner diagnostics")
 
     async def capture_tcp_event(event):
         db = SessionLocal()
@@ -472,7 +472,7 @@ def test_failed_event_is_normalized_and_omits_executor_details(submission_contex
             db.close()
         return True
 
-    monkeypatch.setattr(grading_service, "PistonClient", FailingExecutor)
+    monkeypatch.setattr(grading_service, "LocalRunner", FailingExecutor)
     monkeypatch.setattr(submission_events, "_event_sender", capture_tcp_event)
     asyncio.run(grading_service.grade_submission(submission_id))
 
@@ -480,13 +480,13 @@ def test_failed_event_is_normalized_and_omits_executor_details(submission_contex
     try:
         persisted = db.get(Submission, submission_id)
         assert persisted.status == SubmissionStatus.error
-        assert "private Piston and Docker diagnostics" in persisted.error_summary
+        assert "private runner diagnostics" in persisted.error_summary
         assert len(observed) == 2
         for event, state_at_delivery in observed:
             assert event["type"] == "submission.error"
             assert event["payload"] == {"submission_id": submission_id}
             assert state_at_delivery == SubmissionStatus.error
-            assert "Piston" not in str(event)
+            assert "Runner" not in str(event)
             assert "Docker" not in str(event)
     finally:
         db.close()

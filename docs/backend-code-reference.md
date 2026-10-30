@@ -39,9 +39,9 @@ backend/app/
 │   ├── auth.py                      # User lookup & authentication
 │   ├── dependencies.py              # FastAPI dependency callables (auth guards)
 │   ├── submission_service.py        # Submission validation & persistence
-│   ├── grading_service.py           # Grading orchestration (Piston integration)
+│   ├── grading_service.py           # Grading orchestration (local runner integration)
 │   ├── java_method_grader.py        # Java reflection harness and argument validation
-│   └── piston_client.py             # Async HTTP client for Piston API v2
+│   └── local_runner.py              # Subprocess-based code execution
 ├── realtime/
 │   ├── bridge.py                    # Authenticated TCP bridge to the Java realtime server
 │   ├── event_router.py              # Dispatches events received from Java
@@ -143,12 +143,12 @@ Pydantic `BaseSettings` class that reads from environment variables and a `.env`
 | `jwt_algorithm` | `"HS256"` | JWT algorithm |
 | `access_token_expire_minutes` | `60` | Token lifetime in minutes |
 | `database_url` | `"sqlite:///./data/exam_system.db"` | SQLAlchemy connection string |
-| `piston_base_url` | `"http://127.0.0.1:2000"` | Piston API base URL |
-| `piston_request_timeout_seconds` | `20.0` | HTTP timeout for Piston calls |
-| `piston_compile_timeout_ms` | `10000` | Max compile time sent to Piston |
-| `piston_run_timeout_ms` | `3000` | Max run time sent to Piston |
-| `piston_compile_memory_limit_bytes` | `536870912` (512 MiB) | Compile memory limit |
-| `piston_run_memory_limit_bytes` | `268435456` (256 MiB) | Runtime memory limit |
+
+
+
+
+
+
 | `socket_server_host` | `"127.0.0.1"` | Java Socket server host (Phase 5) |
 | `socket_server_port` | `9000` | Java Socket server port (Phase 5) |
 | `socket_server_shared_secret` | `None` | Shared secret for FastAPI-to-Java TCP challenge-response authentication; bridge is disabled when unset |
@@ -596,12 +596,12 @@ Lists submissions. Students see only their own; teachers see all. Optionally fil
 2. Loads the question — marks as error if not found
 3. Loads all test cases for the question — marks as error if none exist
 4. Routes to `_grade_stdio()` for stdin/stdout questions or `_grade_java_method()` for Java class/method questions
-5. On `PistonClientError`: marks submission as `error` with the Piston error message
+5. On `LocalRunnerError`: marks submission as `error` with the runner error message
 6. On any other exception: logs the traceback and marks as `error`
 
 ### `_grade_stdio(db, submission, question, test_cases) -> None`
 **Internal** — grades a stdin/stdout question. For each test case:
-1. Sends the source code + test case input to Piston via `PistonClient.execute()`
+1. Sends the source code + test case input to the local runner via `LocalRunner.execute()`
 2. If compilation fails (`compile.code != 0`), marks this and all remaining test cases as failed with the compile error
 3. If execution succeeds, compares `run.stdout` (trimmed) with `expected_output` (trimmed) for an exact match
 4. Creates a `SubmissionTestResult` row for each test case
@@ -623,53 +623,54 @@ Sets the submission to `completed` with the calculated score and `graded_at` tim
 
 ---
 
-## `services/piston_client.py` — Piston API Client
+## `services/local_runner.py` — Local Code Runner
 
-### `PistonClientError`
+### `LocalRunnerError`
 ```python
-class PistonClientError(RuntimeError)
+class LocalRunnerError(RuntimeError)
 ```
-Custom exception for all Piston-related failures (connection errors, HTTP errors, invalid responses).
+Custom exception for all local execution failures (missing compiler, runtime errors, timeouts).
 
-### `PistonRuntime`
-Pydantic model for a Piston runtime entry: `language`, `version`, `aliases`, `runtime`.
+### `StageResult`
+```python
+@dataclass
+class StageResult:
+    stdout: str = ""
+    stderr: str = ""
+    output: str = ""
+    code: int | None = None
+    signal: str | None = None
+```
+Result of a single stage (compile or run): captured stdout, stderr, combined output, exit code, and signal (timed-out).
 
-### `PistonFile`
-Pydantic model for a source file sent to Piston. `name` is validated to reject path separators (`/`, `\`) and reserved names (`.`, `..`). `encoding` defaults to `"utf8"`.
+### `ExecutionResult`
+```python
+@dataclass
+class ExecutionResult:
+    language: str = ""
+    version: str = ""
+    run: StageResult = field(default_factory=StageResult)
+    compile: StageResult | None = None
+```
+Full execution result, mirroring the old Piston response shape for minimal consumer changes.
 
-### `PistonStageResult`
-Pydantic model for a single stage result (compile or run): `stdout`, `stderr`, `output`, `code`, `signal`.
+### `LocalRunner`
+Compiles and runs code on the local machine using `subprocess`. Supports Java (compiled with `javac`, run with `java`) and Python (run directly).
 
-### `PistonExecutionResult`
-Pydantic model for a full Piston execution response: `language`, `version`, `run` (required), `compile` (optional).
+#### `__init__()`
+Prepares a temporary working directory.
 
-### `PistonClient`
-Async HTTP client for the Piston API v2. Uses `httpx.AsyncClient` internally.
+#### `__aenter__() / __aexit__()`
+Async context manager support. `__aexit__` calls `cleanup()` to remove the temp directory.
 
-#### `__init__(base_url, timeout_seconds, transport)`
-Creates the underlying `httpx.AsyncClient`. Defaults to `settings.piston_base_url` and `settings.piston_request_timeout_seconds`. Accepts a custom `transport` for testing.
-
-#### `__aenter__() / __aexit__() / close()`
-Async context manager support. `close()` shuts down the HTTP client.
-
-#### `get_runtimes() -> list[PistonRuntime]`
-**GET /api/v2/runtimes** — fetches the list of installed language runtimes from Piston. Validates the response as a list of `PistonRuntime` objects.
-
-#### `execute(*, language, files, stdin, args, version) -> PistonExecutionResult`
-**POST /api/v2/execute** — executes code through Piston. Flow:
-1. Validates and serializes source files
-2. Calls `get_runtimes()` to find a matching runtime (by language name/alias and optional version)
-3. Builds the execution payload with compile/run timeout and memory limits from settings
-4. Sends the request and validates the response as `PistonExecutionResult`
-
-#### `_get_json(path) -> object`
-**Internal** — sends a GET request and decodes the JSON response. Wraps all errors as `PistonClientError`.
-
-#### `_post_json(path, payload) -> object`
-**Internal** — sends a POST request with a JSON body and decodes the response.
-
-#### `_decode_response(response) -> object`
-**Internal (static)** — checks the HTTP status code (raises on 4xx/5xx), then parses the response body as JSON. All errors are wrapped as `PistonClientError`.
+#### `execute(*, language, files, stdin, args, run_timeout_ms) -> ExecutionResult`
+Compiles and runs code. Flow:
+1. Writes all source files to a temporary directory
+2. For Java: runs `javac` to compile, then `java` to execute
+3. For Python: runs `python` on the first `.py` file
+4. Captures stdout, stderr, exit code
+5. Enforces timeouts via `asyncio.wait_for` wrapping `subprocess.run`
+6. Returns an `ExecutionResult` with compile and run stages
 
 ---
 

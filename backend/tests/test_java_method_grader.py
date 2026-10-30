@@ -1,7 +1,7 @@
 """Protocol, scoring and real-JVM regressions for Task 4.
 
 The JVM examples below are trusted test fixtures. Production submissions must
-only run through Piston, never through this local test adapter.
+only run through the LocalRunner, never through this local test adapter.
 """
 
 import json
@@ -30,21 +30,21 @@ from app.services.java_method_grader import (
     parse_runner_result,
     values_equal,
 )
-from app.services.piston_client import (
-    PistonClientError,
-    PistonExecutionResult,
-    PistonStageResult,
+from app.services.local_runner import (
+    LocalRunnerError,
+    ExecutionResult,
+    StageResult,
 )
 
 
 def execution(stdout="", *, run_code=0, signal=None, compile_code=0):
-    return PistonExecutionResult(
+    return ExecutionResult(
         language="java",
         version="17",
-        compile=PistonStageResult(
+        compile=StageResult(
             code=compile_code, stderr="syntax error" if compile_code else ""
         ),
-        run=PistonStageResult(stdout=stdout, code=run_code, signal=signal),
+        run=StageResult(stdout=stdout, code=run_code, signal=signal),
     )
 
 
@@ -225,7 +225,7 @@ async def test_weighted_score_is_computed_in_python():
         ),
     ]
     db, submission, question, cases = objects(cases=cases)
-    with patch("app.services.java_method_grader.PistonClient") as cls:
+    with patch("app.services.java_method_grader.LocalRunner") as cls:
         execute = cls.return_value.__aenter__.return_value.execute
         execute.side_effect = lambda **kw: execution(
             frame(
@@ -240,7 +240,7 @@ async def test_weighted_score_is_computed_in_python():
 
 
 @pytest.mark.asyncio
-async def test_hidden_expected_value_is_never_sent_to_piston():
+async def test_hidden_expected_value_is_never_sent_to_runner():
     secret = "SECRET_EXPECTED_VALUE_687297"
     cases = [
         Case(
@@ -253,7 +253,7 @@ async def test_hidden_expected_value_is_never_sent_to_piston():
         )
     ]
     db, submission, question, cases = objects("public String text()", cases=cases)
-    with patch("app.services.java_method_grader.PistonClient") as cls:
+    with patch("app.services.java_method_grader.LocalRunner") as cls:
         execute = cls.return_value.__aenter__.return_value.execute
         execute.side_effect = lambda **kw: execution(
             frame(json.loads(kw["stdin"]), "wrong")
@@ -300,7 +300,7 @@ async def test_forged_or_malformed_output_cannot_pass(mutation):
         }
         return execution(variants[mutation])
 
-    with patch("app.services.java_method_grader.PistonClient") as cls:
+    with patch("app.services.java_method_grader.LocalRunner") as cls:
         cls.return_value.__aenter__.return_value.execute.side_effect = reply
         await grade_java_method(db, submission, question, cases)
     assert submission.score == 0
@@ -315,7 +315,7 @@ async def test_unsuccessful_process_cannot_pass_even_with_valid_output(
     run_code, signal
 ):
     db, submission, question, cases = objects()
-    with patch("app.services.java_method_grader.PistonClient") as cls:
+    with patch("app.services.java_method_grader.LocalRunner") as cls:
         cls.return_value.__aenter__.return_value.execute.side_effect = (
             lambda **kw: execution(
                 frame(json.loads(kw["stdin"]), 5), run_code=run_code, signal=signal
@@ -334,7 +334,7 @@ async def test_compilation_failure_marks_all_tests_and_stops_recompiling():
         for i in [101, 102]
     ]
     db, submission, question, cases = objects(cases=cases)
-    with patch("app.services.java_method_grader.PistonClient") as cls:
+    with patch("app.services.java_method_grader.LocalRunner") as cls:
         execute = cls.return_value.__aenter__.return_value.execute
         execute.return_value = execution(compile_code=1)
         await grade_java_method(db, submission, question, cases)
@@ -347,7 +347,7 @@ async def test_compilation_failure_marks_all_tests_and_stops_recompiling():
 async def test_invalid_test_configuration_is_not_a_student_failure():
     db, submission, question, cases = objects()
     cases[0].input_data = "[2]"
-    with patch("app.services.java_method_grader.PistonClient") as cls:
+    with patch("app.services.java_method_grader.LocalRunner") as cls:
         await grade_java_method(db, submission, question, cases)
         cls.assert_not_called()
     assert submission.status == SubmissionStatus.error
@@ -372,7 +372,7 @@ async def test_grade_submission_dispatches_to_java_grader():
 
 
 @pytest.mark.asyncio
-async def test_piston_outage_remains_an_infrastructure_error():
+async def test_runner_outage_remains_an_infrastructure_error():
     db, submission, question, cases = objects()
     db.get.side_effect = lambda model, pk: {
         Submission: submission,
@@ -382,10 +382,10 @@ async def test_piston_outage_remains_an_infrastructure_error():
         cases
     )
     with patch("app.services.grading_service.SessionLocal", return_value=db), patch(
-        "app.services.java_method_grader.PistonClient"
+        "app.services.java_method_grader.LocalRunner"
     ) as cls:
         cls.return_value.__aenter__.return_value.execute.side_effect = (
-            PistonClientError("offline")
+            LocalRunnerError("offline")
         )
         await grade_submission(1)
     assert submission.status == SubmissionStatus.error
@@ -572,7 +572,7 @@ async def test_real_student_markers_cannot_override_actual_result(compiled_java)
         )
     ]
     db, submission, question, cases = objects("int spoof()", cases=cases)
-    with patch("app.services.java_method_grader.PistonClient") as cls:
+    with patch("app.services.java_method_grader.LocalRunner") as cls:
 
         def local_adapter(**kw):
             run = run_java(compiled_java, json.loads(kw["stdin"]))
@@ -591,7 +591,7 @@ async def test_each_case_uses_a_fresh_jvm_and_resets_static_state(compiled_java)
         for i in [101, 102]
     ]
     db, submission, question, cases = objects("int next()", cases=cases)
-    with patch("app.services.java_method_grader.PistonClient") as cls:
+    with patch("app.services.java_method_grader.LocalRunner") as cls:
         execute = cls.return_value.__aenter__.return_value.execute
         execute.side_effect = lambda **kw: execution(
             run_java(compiled_java, json.loads(kw["stdin"])).stdout
@@ -609,7 +609,7 @@ async def test_early_system_exit_is_not_a_success(compiled_java):
         )
     ]
     db, submission, question, cases = objects("int exitEarly()", cases=cases)
-    with patch("app.services.java_method_grader.PistonClient") as cls:
+    with patch("app.services.java_method_grader.LocalRunner") as cls:
 
         def local_adapter(**kw):
             run = run_java(compiled_java, json.loads(kw["stdin"]))
@@ -644,7 +644,7 @@ def test_real_java_json_parser_rejects_malformed_input(compiled_java, raw):
 
 
 @pytest.mark.parametrize("broken", [False, True])
-def test_piston_source_file_mode_bootstrap_compiles_sibling_files(
+def test_runner_source_file_mode_bootstrap_compiles_sibling_files(
     compiled_java, tmp_path, broken
 ):
     java, _ = compiled_java
@@ -678,12 +678,12 @@ def test_piston_source_file_mode_bootstrap_compiles_sibling_files(
 @pytest.mark.asyncio
 async def test_bootstrap_compiler_failure_is_recorded_as_compile_output():
     db, submission, question, cases = objects()
-    with patch("app.services.java_method_grader.PistonClient") as cls:
+    with patch("app.services.java_method_grader.LocalRunner") as cls:
         cls.return_value.__aenter__.return_value.execute.return_value = (
-            PistonExecutionResult(
+            ExecutionResult(
                 language="java",
                 version="15",
-                run=PistonStageResult(code=65, stderr="Sample.java: syntax error"),
+                run=StageResult(code=65, stderr="Sample.java: syntax error"),
             )
         )
         await grade_java_method(db, submission, question, cases)
@@ -700,7 +700,7 @@ async def test_terminated_test_does_not_discard_other_case_results():
         for i in [101, 102]
     ]
     db, submission, question, cases = objects(cases=cases)
-    with patch("app.services.java_method_grader.PistonClient") as cls:
+    with patch("app.services.java_method_grader.LocalRunner") as cls:
         execute = cls.return_value.__aenter__.return_value.execute
 
         def reply(**kw):

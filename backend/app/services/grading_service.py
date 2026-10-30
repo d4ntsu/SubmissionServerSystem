@@ -13,7 +13,7 @@ from app.models.submission import (
 )
 from app.models.test_case import TestCase
 from app.services.java_method_grader import grade_java_method
-from app.services.piston_client import PistonClient, PistonClientError
+from app.services.local_runner import LocalRunner, LocalRunnerError
 from app.realtime.submission_events import publish_submission_event
 
 logger = logging.getLogger(__name__)
@@ -91,8 +91,8 @@ async def grade_submission(submission_id: int) -> None:
 
     except ValueError as exc:
         await _fail_submission(db, submission, str(exc))
-    except PistonClientError as exc:
-        await _fail_submission(db, submission, f"Piston error: {exc}")
+    except LocalRunnerError as exc:
+            await _fail_submission(db, submission, f"Execution error: {exc}")
     except Exception:
         logger.exception("Unexpected error grading submission %d", submission_id)
         await _fail_submission(db, submission, "Internal grading error")
@@ -112,14 +112,14 @@ async def _grade_stdio(
     earned_weight = 0.0
     compile_failed = False
 
-    async with PistonClient() as piston:
+    async with LocalRunner() as runner:
         for tc in test_cases:
             if compile_failed:
                 _create_test_result(db, submission, tc, passed=False, compile_output="Compilation failed")
                 continue
 
             try:
-                result = await piston.execute(
+                result = await runner.execute(
                     language=submission.language,
                     files=[
                         {
@@ -129,7 +129,7 @@ async def _grade_stdio(
                     ],
                     stdin=tc.input_data,
                 )
-            except PistonClientError:
+            except LocalRunnerError:
                 raise
 
             if (
@@ -141,12 +141,12 @@ async def _grade_stdio(
                 and not (result.compile and result.compile.code not in (None, 0))
             ):
                 logger.warning(
-                    "Piston returned an empty execution result for submission %d, "
+                    "Runner returned an empty execution result for submission %d, "
                     "test case %d; retrying once",
                     submission.id,
                     tc.id,
                 )
-                result = await piston.execute(
+                result = await runner.execute(
                     language=submission.language,
                     files=[
                         {

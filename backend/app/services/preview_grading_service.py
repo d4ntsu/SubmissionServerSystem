@@ -12,7 +12,7 @@ from app.models.submission import Submission, SubmissionStatus, SubmissionTestRe
 from app.models.test_case import TestCase
 from app.services.grading_service import _grade_stdio
 from app.services.java_method_grader import grade_java_method
-from app.services.piston_client import PistonClientError
+from app.services.local_runner import LocalRunnerError
 
 logger = logging.getLogger(__name__)
 
@@ -117,8 +117,8 @@ async def grade_question_preview(
                 test_cases,
                 publish_event=False,
             )
-        except PistonClientError as exc:
-            _mark_error(submission, f"Piston error: {exc}")
+        except LocalRunnerError as exc:
+            _mark_error(submission, f"Execution error: {exc}")
         except Exception:
             logger.exception("Preview grading failed for question %s", question.id)
             _mark_error(submission, "Internal grading error")
@@ -130,8 +130,8 @@ async def grade_question_preview(
                 question,
                 test_cases,
             )
-        except PistonClientError as exc:
-            _mark_error(submission, f"Piston error: {exc}")
+        except LocalRunnerError as exc:
+            _mark_error(submission, f"Execution error: {exc}")
         except Exception:
             logger.exception("Preview grading failed for question %s", question.id)
             _mark_error(submission, "Internal grading error")
