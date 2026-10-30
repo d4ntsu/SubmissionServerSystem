@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, patch
 
 from app.database import SessionLocal
 from app.models.submission import Submission
-from app.services.piston_client import PistonExecutionResult, PistonStageResult
+from app.services.local_runner import ExecutionResult, StageResult
 
 
 def _login(client, username, role):
@@ -22,12 +22,12 @@ def _login(client, username, role):
     return response.json()["access_token"]
 
 
-def _execution(stdout: str) -> PistonExecutionResult:
-    return PistonExecutionResult(
+def _execution(stdout: str) -> ExecutionResult:
+    return ExecutionResult(
         language="java",
         version="15.0.2",
-        run=PistonStageResult(stdout=stdout, stderr="", output=stdout, code=0),
-        compile=PistonStageResult(code=0, stdout="", stderr="", output=""),
+        run=StageResult(stdout=stdout, stderr="", output=stdout, code=0),
+        compile=StageResult(code=0, stdout="", stderr="", output=""),
     )
 
 
@@ -82,12 +82,12 @@ def test_teacher_can_grade_an_exam_without_creating_submissions(client):
     )
     assert hidden_case.status_code == 201
 
-    with patch("app.services.grading_service.PistonClient") as piston_cls, patch(
+    with patch("app.services.grading_service.LocalRunner") as runner_cls, patch(
         "app.services.grading_service.publish_submission_event",
         new_callable=AsyncMock,
     ) as publish_event:
-        piston = piston_cls.return_value.__aenter__.return_value
-        piston.execute.side_effect = [_execution("7\n"), _execution("99\n")]
+        runner = runner_cls.return_value.__aenter__.return_value
+        runner.execute.side_effect = [_execution("7\n"), _execution("99\n")]
 
         response = client.post(
             f"/exams/{exam_id}/grade",

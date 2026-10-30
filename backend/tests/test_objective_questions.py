@@ -192,7 +192,7 @@ def test_objective_question_accepts_submission_without_test_cases(
         ),
     ],
 )
-async def test_objective_grading_needs_no_test_cases_or_piston(
+async def test_objective_grading_needs_no_test_cases_or_runner(
     question_type, configured_values, source_code, expected_score
 ):
     with (
@@ -201,7 +201,7 @@ async def test_objective_grading_needs_no_test_cases_or_piston(
             "app.services.grading_service.publish_submission_event",
             new_callable=AsyncMock,
         ),
-        patch("app.services.grading_service.PistonClient") as piston_class,
+        patch("app.services.grading_service.LocalRunner") as runner_class,
     ):
         db = session_factory.return_value
         question = Question(
@@ -230,4 +230,4 @@ async def test_objective_grading_needs_no_test_cases_or_piston(
         assert submission.status == SubmissionStatus.completed
         assert submission.score == expected_score
         db.query.assert_not_called()
-        piston_class.assert_not_called()
+        runner_class.assert_not_called()

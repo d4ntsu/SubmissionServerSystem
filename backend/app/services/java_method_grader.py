@@ -11,11 +11,10 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.models.question import Question
 from app.models.submission import Submission, SubmissionStatus, SubmissionTestResult
 from app.models.test_case import TestCase
-from app.services.piston_client import PistonClient, PistonClientError
+from app.services.local_runner import LocalRunner, LocalRunnerError
 
 RESULT_PREFIX = "@@JAVA_GRADER_RESULT@@"
 PROTOCOL_VERSION = 1
@@ -387,7 +386,7 @@ async def grade_java_method(
 
     earned_weight = 0.0
     compile_error: str | None = None
-    async with PistonClient() as piston:
+    async with LocalRunner() as runner:
         for tc, arguments, expected in prepared:
             if compile_error is not None:
                 _record_test_result(
@@ -396,14 +395,17 @@ async def grade_java_method(
                 continue
             request_id = secrets.token_hex(16)
             config = build_runner_config(spec, class_name, tc.id, arguments, request_id)
-            execution = await piston.execute(
+            execution = await runner.execute(
                 language="java",
                 files=files,
-                args=[class_name],
+                # No args: Main.java uses already-compiled classes (LocalRunner compiles
+                # all .java files before running). With args, Main.java tries to recompile
+                # using JavaCompiler which is not available in all JDK distributions.
+                args=None,
                 stdin=json.dumps(config, ensure_ascii=True, allow_nan=False),
-                run_timeout_ms=settings.piston_java_method_run_timeout_ms,
-                run_cpu_time_ms=settings.piston_java_method_run_cpu_time_ms,
-                run_memory_limit_bytes=settings.piston_java_method_run_memory_limit_bytes,
+                run_timeout_ms=15000,
+                run_cpu_time_ms=15000,
+                run_memory_limit_bytes=536870912,
             )
             if execution.compile and (
                 execution.compile.code != 0 or execution.compile.signal
@@ -428,8 +430,8 @@ async def grade_java_method(
                 execution.run.code == 70
                 and "[java-grader bootstrap]" in execution.run.stderr
             ):
-                raise PistonClientError(
-                    "Java grader bootstrap failed; install a full JDK 11+ runtime in Piston"
+                raise LocalRunnerError(
+                                    "Java grader bootstrap failed; install a full JDK 11+ runtime"
                 )
             if execution.run.code != 0 or execution.run.signal:
                 error = (

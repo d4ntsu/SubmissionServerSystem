@@ -11,7 +11,7 @@ Yêu cầu Python 3.10+, JDK 11+ cho kiểm thử Java local, và Piston tự ho
 ```bash
 python -m pip install -r backend/requirements.txt
 cd backend
-python -m pytest tests/test_java_method_grader.py tests/test_hidden_test_cases.py tests/test_grading_service.py tests/test_piston_client.py -q
+python -m pytest tests/test_java_method_grader.py tests/test_hidden_test_cases.py tests/test_grading_service.py tests/test_local_runner.py -q
 ```
 
 Các test real JVM sẽ được skip nếu máy không có JDK. Muốn nghiệm thu phần Java, cần chạy chúng với JDK và kiểm tra không có skip.

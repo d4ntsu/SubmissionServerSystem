@@ -6,8 +6,7 @@ Install or confirm:
 
 - Python 3.11+
 - Node.js 18+
-- Java 17+ and Maven 3.9+
-- Docker Desktop, running with its WSL2 engine
+- Java 17+ JDK (with `javac` in PATH) and Maven 3.9+
 
 ## 1. Configure the backend
 
@@ -19,7 +18,7 @@ Copy-Item .env.example backend\.env
 
 Edit `backend\.env`. Set a strong, random value for `SECRET_KEY` and another for `SOCKET_SERVER_SHARED_SECRET`. Keep these values private and don’t commit the `.env` file. The socket secret must match in the backend and Java server.
 
-The remaining example settings are suitable for local development. In particular, keep Piston on `http://127.0.0.1:2000`.
+The remaining example settings are suitable for local development.
 
 ## 2. Install backend dependencies
 
@@ -34,21 +33,17 @@ python -m pip install -r requirements.txt
 
 The commands below use the virtual environment at `backend\.venv`.
 
-## 3. Start Piston for real code grading
+## 3. Verify Java and Python are available
 
-In a separate PowerShell window at the repository root:
-
-```powershell
-docker compose -f deploy\piston\docker-compose.yml up -d
-```
-
-Piston’s image and language runtimes are separate: starting the container alone may not install Java or Python runtimes. Check `http://127.0.0.1:2000/api/v2/runtimes`; install any missing runtimes using the instructions in `the project setup documentation`. The Java smoke test is:
+The system uses your local Java and Python installations to compile and run student code. Verify they are accessible from the command line:
 
 ```powershell
-python deploy\piston\phase1_java_test.py
+java -version
+javac -version
+python --version
 ```
 
-Keep Piston bound to localhost; it runs submitted code and should not be exposed directly to student devices.
+Make sure `javac` (the Java compiler) is in your PATH — it is required for compiling Java submissions. Python submissions use the same Python interpreter that runs the backend.
 
 ## 4. Start the Java socket server
 

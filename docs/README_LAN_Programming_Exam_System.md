@@ -8,7 +8,7 @@ The system provides:
 - Teacher and student accounts with role-based access.
 - Exam and question management.
 - Code submission through a browser.
-- Automated code execution and grading using a self-hosted Piston instance.
+- Automated code execution and grading using a local subprocess runner.
 - Persistent exam, submission, and result records in SQLite.
 - Real-time notifications and connection status using Socket Programming.
 - Java class/method grading with a Java test harness and Reflection.
@@ -24,7 +24,7 @@ This README is the implementation guide for the coding agent. Treat the architec
 3. Students can log in, view available exams, open questions, and submit source code.
 4. The backend validates exam status, deadlines, student eligibility, and allowed languages before accepting submissions.
 5. Accepted submissions are persisted before grading begins.
-6. A background worker sends submissions to Piston and collects execution results.
+6. A background worker compiles and runs submissions using the host's Java/Python runtime.
 7. The system calculates scores, stores results, and displays them to students and teachers according to permissions.
 8. Real-time events inform students about exam announcements and submission/grading status.
 9. The system tracks connected students as online/offline on a best-effort basis.
@@ -35,7 +35,7 @@ This README is the implementation guide for the coding agent. Treat the architec
 - Keep the design understandable and maintainable for a student project.
 - Do not execute untrusted student code directly on the Windows host.
 - Keep hidden test cases and expected results on the server side.
-- Apply execution time, memory, output, and process limits through Piston.
+- Apply execution time, memory, output, and process limits through the local runner.
 - Handle multiple submissions without blocking HTTP request handlers.
 - Persist submissions before queuing work so a server restart does not silently lose accepted submissions.
 - Validate all requests on the backend; never trust frontend state for authorization or exam timing.
@@ -48,7 +48,7 @@ This README is the implementation guide for the coding agent. Treat the architec
 | Frontend | Next.js, TypeScript, Tailwind CSS | Teacher and student web interfaces |
 | Main backend | Python, FastAPI | API, authentication, validation, exam logic |
 | Database | SQLite, SQLAlchemy | Users, exams, questions, submissions, results |
-| Code execution | Self-hosted Piston | Compile and execute submitted code in an isolated runner |
+| Code execution | Local subprocess runner | Compile and execute submitted code using the host's Java/Python runtime |
 | Grading worker | Python background worker and durable database-backed job state | Process queued submissions and recover pending work |
 | Java method grader | Java, Reflection, test harness | Validate required class/method structure and invoke methods for test cases |
 | Realtime transport | Java TCP Socket server if Java Socket Programming must be demonstrated; browser bridge through FastAPI WebSocket | Real-time events and connection status |
@@ -88,18 +88,19 @@ Next.js Frontend <------> FastAPI Backend
               |          Python Worker   Java TCP Socket Server
               |              |                |
               |              v                |
-              |             Piston            |
-              |              |                |
-              +<-------------+----------------+
-                         Results
-```
+                            |        Local Runner          |
+                            |     (subprocess on host)     |
+                            |              |                |
+                            +<-------------+----------------+
+                                       Results
+              ```
 
-The exact realtime topology may be refined during implementation, but the responsibilities must remain separated:
-- HTTP APIs handle ordinary requests and commands.
-- Socket/WebSocket communication handles notifications and connection events.
-- SQLite stores durable application state.
-- The worker handles long-running grading tasks.
-- Piston executes code in its configured isolated runner.
+              The exact realtime topology may be refined during implementation, but the responsibilities must remain separated:
+              - HTTP APIs handle ordinary requests and commands.
+              - Socket/WebSocket communication handles notifications and connection events.
+              - SQLite stores durable application state.
+              - The worker handles long-running grading tasks.
+              - The local runner compiles and executes code using the host's Java/Python runtime.
 
 ## 5. Main User Flows
 
@@ -112,7 +113,7 @@ The exact realtime topology may be refined during implementation, but the respon
 5. FastAPI checks identity, exam status, deadline, question, language, and submission limits.
 6. FastAPI saves the submission and its initial status in SQLite.
 7. A grading job becomes available to the worker.
-8. The worker prepares a Piston request and sends the code for execution.
+8. The worker writes the code to a temporary directory and compiles/runs it using the host's Java or Python runtime.
 9. The worker collects compile/runtime/output results.
 10. The grading service calculates the score and persists the detailed result.
 11. A realtime event notifies the student that the submission status changed.
@@ -191,7 +192,7 @@ programming-exam-system/
 │   │   │   ├── exam_service.py         (Phase 3)
 │   │   │   ├── submission_service.py   (Phase 3)
 │   │   │   ├── grading_service.py      (Phase 3)
-│   │   │   ├── piston_client.py
+│   │   │   ├── local_runner.py
 │   │   │   └── java_method_grader.py   (Phase 6)
 │   │   ├── realtime/
 │   │   │   └── websocket.py            (Phase 5)
@@ -203,7 +204,7 @@ programming-exam-system/
 │   │   ├── __init__.py
 │   │   ├── conftest.py
 │   │   ├── test_api.py
-│   │   └── test_piston_client.py
+│   │   └── test_local_runner.py
 │   └── requirements.txt
 ├── java-socket-server/
 │   ├── pom.xml
@@ -230,10 +231,6 @@ programming-exam-system/
 │   ├── examples/
 │   └── README.md
 ├── deploy/
-│   ├── piston/
-│   │   ├── docker-compose.yml
-│   │   ├── phase1_java_test.py
-│   │   └── data/piston/packages/          (installed runtimes — gitignored)
 │   └── scripts/
 ├── .env.example
 ├── .gitignore
@@ -344,7 +341,7 @@ The student writes a program that reads input and prints output. The grader runs
 The question specifies a required class and method. For example, a question may require a `Calculator` class with an `add(int, int)` method.
 
 ### Type C: Multiple choice
-Teachers provide at least two answer options and mark the correct option letter or letters. The question explicitly records whether students may select one answer or select all that apply. Single-answer questions use radio buttons; select-all questions use checkboxes. Grading compares the submitted selection with the exact correct set, rejecting duplicate and out-of-range selections. Objective submissions are persisted and graded by the backend without test cases or Piston execution.
+Teachers provide at least two answer options and mark the correct option letter or letters. The question explicitly records whether students may select one answer or select all that apply. Single-answer questions use radio buttons; select-all questions use checkboxes. Grading compares the submitted selection with the exact correct set, rejecting duplicate and out-of-range selections. Objective submissions are persisted and graded by the backend without test cases or code execution.
 
 ### Type D: Short answer
 Teachers provide a private expected answer. Students see the question text above a short text field. Grading trims leading and trailing whitespace and compares the answer case-insensitively.
@@ -362,7 +359,7 @@ The Java grading flow:
 Teachers can provide optional starter code per question. For Java class/method questions, the starter code should contain the required class and method, not a `main` method: the backend generates a separate `Main.java` runner from the question contract and test-case arguments. Students receive the question's boilerplate on first open and when they reset their editor. If the teacher leaves it blank, the editor starts blank; changes to the boilerplate do not overwrite code a student has already entered.
 
 Current implementation details:
-- Reflection is not a security sandbox. Student code must still run inside Piston or another appropriately isolated environment.
+- Reflection is not a security sandbox. Student code must still run inside the local runner or another appropriately isolated environment.
 - Do not expose hidden expected values or hidden tests in files or source code accessible to students.
 - The required class must be in the default package, and instance methods need an accessible no-argument constructor.
 - Supported parameter and return types are Java primitives, their boxed wrappers, and `String`.
@@ -415,46 +412,28 @@ Protocol rules:
 - Treat online status as approximate; a disconnected browser may take time to be detected.
 - Do not let clients set authoritative exam status, grades, roles, or another user's identity.
 
-## 10. Piston and Offline Operation
+## 10. Local Code Execution and Offline Operation
 
-Piston is the selected local code-execution service. The project uses the Piston v2 API at `http://127.0.0.1:2000`; keep it bound to localhost and do not expose its privileged execution API directly to the LAN or Internet.
+The system uses a local subprocess runner to compile and execute student code directly on the teacher's Windows PC. No Docker or external execution service is required.
 
 Deployment on the teacher's Windows PC:
 
-1. Install and start Docker Desktop with its WSL2 Linux engine.
-2. While Internet access is available, pull and start the Piston image:
-   `docker compose -f deploy/piston/docker-compose.yml up -d`
-3. Install the required language runtimes using Piston's package manager. Java 15.0.2 has been installed and verified with the project smoke test.
-4. Verify installed runtimes with `GET /api/v2/runtimes` and run `deploy/piston/phase1_java_test.py`.
-5. Test the complete application while disconnected from the Internet after all container images and runtime packages are present.
+1. Install Python 3.11+ and a Java 17+ JDK (with `javac` in PATH).
+2. Install the backend dependencies from `backend/requirements.txt`.
+3. Verify Java and Python are accessible from the command line:
+   ```powershell
+   java -version
+   javac -version
+   python --version
+   ```
+4. Test the complete application while disconnected from the Internet.
 
-To install Java on Windows with Git, Node.js, and npm available:
+The local runner writes student source code to a temporary directory, compiles it (for Java) with `javac`, runs it with `java` or `python`, captures stdout/stderr/exit code, and cleans up. Timeouts are enforced to prevent runaway processes.
 
-```powershell
-$pistonCli = Join-Path $env:TEMP "piston-cli"
-git clone --depth 1 https://github.com/engineer-man/piston.git $pistonCli
-Push-Location (Join-Path $pistonCli "cli")
-npm install
-Pop-Location
-node (Join-Path $pistonCli "cli\index.js") -u http://127.0.0.1:2000 ppman install java
-```
-
-Run the verified Java smoke test from the repository root:
-
-```powershell
-python deploy\piston\phase1_java_test.py
-```
-
-Piston's image and language runtimes are separate downloads. The runtime directory `deploy/piston/data/piston/packages/` is persisted and gitignored; retain it for offline use. Other supported languages must be installed and tested explicitly before the exam.
-
-The Compose configuration disables networking for jobs and sets process, output, compile/run timeout, and memory limits. Review the limits against the course workload and machine resources before deployment. Piston requires a privileged container; keep its API on localhost and accept student code only through the authenticated application backend.
-
-Official references:
-- Piston project and self-hosting: https://github.com/engineer-man/piston
-- Piston API v2: https://github.com/engineer-man/piston/blob/master/docs/api-v2.md
-- Piston configuration: https://github.com/engineer-man/piston/blob/master/docs/configuration.md
-- Docker Desktop WSL 2: https://docs.docker.com/desktop/features/wsl/
-- Docker Desktop installation on Windows: https://docs.docker.com/desktop/setup/install/windows-install/
+Security considerations:
+- Student code runs as the same OS user as the backend process. This is acceptable for a LAN exam where the teacher controls the host machine.
+- Timeouts and output limits prevent most resource-exhaustion attacks.
+- Do not expose the backend API directly to the Internet; keep it on the LAN.
 
 ## 11. Security and Reliability
 
@@ -464,13 +443,13 @@ Official references:
 - Apply request size limits and safe error responses.
 - Store uploads and source files safely; do not trust filenames or file extensions.
 - Never run untrusted submissions directly on the Windows host.
-- Configure and verify Piston's isolation and resource limits; a sandbox reduces risk but is not a guarantee of complete security.
-- Keep Piston bound to localhost; its container is privileged and its execution API must not be exposed to student devices.
+- Configure and verify the local runner's timeouts and output limits; these reduce risk but are not a guarantee of complete security.
+- Keep the backend bound to localhost; student code runs as the backend process user.
 - Keep hidden test cases and expected outputs server-side as far as the execution model permits.
 - Limit stdout/stderr capture and stored logs to avoid resource exhaustion.
 - Use a durable job state in the database. On startup, recover eligible `QUEUED` jobs and handle jobs left in `RUNNING` according to a documented retry policy.
 - Make grading retries idempotent so the same submission is not accidentally awarded duplicate points.
-- Handle duplicate submissions, client disconnects, timeouts, Piston failures, and service restarts.
+- Handle duplicate submissions, client disconnects, timeouts, runner failures, and service restarts.
 - Add audit logs for important teacher actions if time permits.
 - Restrict internal Socket service access and authenticate service-to-service messages.
 - Keep secrets and configuration in environment variables or local configuration files excluded from version control.
@@ -481,7 +460,7 @@ Build incrementally. Do not attempt all advanced features at once. The status be
 
 ### Phase 1 — Environment validation
 - **Status: Implemented; offline verification remains.**
-- Piston is configured locally, Java is installed, and Java execution has been smoke-tested through Piston.
+- Java and Python are installed locally, and Java execution has been smoke-tested through the local runner.
 - Resource limits and the Java method-grader runtime requirements have been configured and exercised.
 - Still to verify: the complete application works with Internet disconnected after all images and runtimes have been prepared.
 
@@ -492,9 +471,9 @@ Build incrementally. Do not attempt all advanced features at once. The status be
 
 ### Phase 3 — Basic submission and grading
 - **Status: Implemented.**
-- Submissions are validated and persisted before a database-backed worker grades them through Piston.
+- Submissions are validated and persisted before a database-backed worker grades them through the local runner.
 - Standard input/output and result persistence/scoring are implemented, including recovery handling for queued or interrupted work.
-- Java standard-I/O execution has been exercised against the configured Piston service.
+- Java standard-I/O execution has been exercised against the local runner.
 
 ### Phase 4 — Frontend completion
 - **Status: Implemented; continue validating UX as features evolve.**
@@ -512,7 +491,7 @@ Build incrementally. Do not attempt all advanced features at once. The status be
 ### Phase 6 — Java Reflection grading
 - **Status: Implemented and exercised.**
 - The Java reflection harness supports class/method questions, configured method contracts, test arguments, and hidden-test handling.
-- Java method questions are graded through Piston. The `ArrayUtils.findSecondLargest(int[])` cases were exercised successfully, and Piston resource caps were adjusted for the harness.
+- Java method questions are graded through the local runner. The `ArrayUtils.findSecondLargest(int[])` cases were exercised successfully.
 - Focused grader tests and the frontend production build passed during implementation.
 
 ### Phase 7 — Deployment and final testing
@@ -528,7 +507,7 @@ The MVP is complete when:
 - A teacher can create and run an exam.
 - A student can connect over the LAN and submit code.
 - The backend rejects submissions outside the permitted exam window.
-- A standard input/output Java submission is graded through Piston.
+- A standard input/output Java submission is graded through the local runner.
 - Results are saved and visible to authorized users.
 - The Socket Programming module demonstrates real two-way communication and at least one useful realtime feature.
 - The system can handle multiple connected students without blocking the API.
@@ -560,9 +539,9 @@ When implementing this project:
 Begin with these tasks in order:
 
 1. Inspect the repository and report the existing structure and working components.
-2. Verify the local development environment and the availability of Docker/Piston if possible.
+2. Verify the local development environment and the availability of Java/Python.
 3. Propose a phased implementation plan based on the actual repository rather than assuming it is empty.
-4. Implement the smallest end-to-end slice: login or development authentication, one exam/question, student submission, Piston execution, and persisted result.
+4. Implement the smallest end-to-end slice: login or development authentication, one exam/question, student submission, local code execution, and persisted result.
 5. Add automated tests for backend validation and grading-result handling.
 6. Implement the realtime protocol and Socket feature once the main API flow is clear.
 7. Add Java Reflection grading and deployment/offline checks.
