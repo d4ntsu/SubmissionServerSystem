@@ -25,6 +25,7 @@ interface QuestionSidebarProps {
   actionHint?: string;
   actionDescription?: string;
   submittingLabel?: string;
+  hideActionGuidance?: boolean;
 }
 
 function isQuestionConfigured(question: Question, cases: TestCase[]): boolean {
@@ -55,6 +56,7 @@ export function QuestionSidebar({
   actionHint = "Submission can be confirmed or cancelled",
   actionDescription = "Review every question before submitting. Unanswered questions can still be submitted, but they will not earn points.",
   submittingLabel = "Submitting...",
+  hideActionGuidance = false,
 }: QuestionSidebarProps) {
   const answeredSet = new Set(answeredIds);
   const answeredCount = questions.filter((question) => answeredSet.has(question.id)).length;
@@ -161,9 +163,11 @@ export function QuestionSidebar({
         </div>
 
         <div className="p-3 border-t border-slate-200 bg-slate-50 space-y-2">
-          <div className="text-[10px] text-slate-400 font-mono leading-relaxed">
-            {actionDescription}
-          </div>
+          {!hideActionGuidance && (
+            <div className="text-[10px] text-slate-400 font-mono leading-relaxed">
+              {actionDescription}
+            </div>
+          )}
           <button
             type="button"
             onClick={onReviewSubmit}
@@ -173,10 +177,12 @@ export function QuestionSidebar({
             <Send className="w-3.5 h-3.5" />
             {isSubmitting ? submittingLabel : actionLabel}
           </button>
-          <div className="flex items-center justify-center gap-1.5 text-[10px] font-mono text-slate-400">
-            <ClipboardCheck className="w-3 h-3" />
-            {actionHint}
-          </div>
+          {!hideActionGuidance && (
+            <div className="flex items-center justify-center gap-1.5 text-[10px] font-mono text-slate-400">
+              <ClipboardCheck className="w-3 h-3" />
+              {actionHint}
+            </div>
+          )}
         </div>
       </aside>
     </div>

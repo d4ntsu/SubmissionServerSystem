@@ -1257,17 +1257,8 @@ export default function ExamWorkspacePage() {
               }
               onClose={() => setSidebarOpen(false)}
               actionLabel={isTeacher ? "Grade Exam" : undefined}
-              actionHint={
-                isTeacher
-                  ? "Runs the real backend grader without creating a submission"
-                  : undefined
-              }
-              actionDescription={
-                isTeacher
-                  ? "Grade every question against its configured test cases, including hidden tests. No student submission will be created."
-                  : undefined
-              }
               submittingLabel={isTeacher ? "Grading..." : undefined}
+              hideActionGuidance={isTeacher}
             />
           )}
         </div>
