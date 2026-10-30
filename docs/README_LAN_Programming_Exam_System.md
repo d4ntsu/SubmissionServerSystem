@@ -69,9 +69,6 @@ Preferred design if the course specifically requires **Java Socket Programming**
 - Handle disconnects, exceptions, duplicate connections, and stale online-status entries.
 - Do not rely on Socket events as the authoritative source of exam state. FastAPI and the database remain authoritative.
 
-If the lecturer only requires Socket Programming in general and does not require Java, a Python TCP socket server is also possible. Confirm the course requirement before choosing the implementation. Do not add both Java and Python TCP servers without a clear reason.
-
-Use WebSocket only for communication with browser clients if appropriate. WebSocket and raw TCP sockets are different protocols; explain their roles clearly in project documentation.
 
 ## 4. High-Level Architecture
 

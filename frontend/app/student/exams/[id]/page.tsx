@@ -408,15 +408,15 @@ export default function ExamWorkspacePage() {
   };
 
   const handleConfirmSubmit = async () => {
-    if (isTeacher) return;
-    if (!user || !exam) return;
-    setIsSubmittingExam(true);
-    setSubmitError("");
-    const toSubmit = questions;
+      if (isTeacher) return;
+      if (!user || !exam) return;
+      setIsSubmittingExam(true);
+      setSubmitError("");
+      const toSubmit = questions;
 
-    try {
-      for (const question of toSubmit) {
-        await submitCode({
+      try {
+        for (const question of toSubmit) {
+          await submitCode({
           student_id: user.id,
           student_name: user.full_name,
           question_id: question.id,
@@ -444,11 +444,11 @@ export default function ExamWorkspacePage() {
         router.push(`/student/results/${exam.id}`);
       }, 2600);
     } catch (error) {
-      console.error(error);
-      setSubmitError("The test could not be submitted. Please try again.");
-    } finally {
-      setIsSubmittingExam(false);
-    }
+          console.error(error);
+          setSubmitError("The test could not be submitted. Please try again.");
+        } finally {
+          setIsSubmittingExam(false);
+        }
   };
 
   const handleSendBroadcast = (event: React.FormEvent) => {
@@ -771,7 +771,7 @@ export default function ExamWorkspacePage() {
             <button
               type="button"
               onClick={isTeacher ? handleGradeExam : () => setReviewOpen(true)}
-              disabled={isTeacher ? isGrading : isSubmittingExam}
+                            disabled={isTeacher ? isGrading : isSubmittingExam}
               className="px-5 py-2 rounded bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white text-xs font-bold shadow-sm transition-all flex items-center gap-2 disabled:opacity-50"
             >
               {isTeacher ? (
@@ -1272,6 +1272,18 @@ export default function ExamWorkspacePage() {
           )}
         </div>
 
+
+        <SubmitReviewModal
+          isOpen={reviewOpen}
+          examTitle={exam?.title ?? ""}
+          questions={questions}
+          answers={answers}
+          answeredIds={answeredIds}
+          testCases={allTestCases}
+          isSubmitting={isSubmittingExam}
+          onClose={() => setReviewOpen(false)}
+          onConfirm={handleConfirmSubmit}
+        />
 
         <ExamVerificationModal
           examId={exam.id}

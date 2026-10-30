@@ -846,21 +846,21 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   };
 
   const submitCode = async (data: {
-    student_id: number;
-    student_name: string;
-    question_id: number;
-    question_title: string;
-    exam_id: number;
-    exam_title: string;
-    language: string;
-    source_code: string;
-  }): Promise<Submission> => {
-    const newSubId = nextSubmissionId.current++;
-    const question = Object.values(questions)
-      .flat()
-      .find((item) => item.id === data.question_id);
-    const questionTestCases = testCases[data.question_id] || [];
-    const maxScore = question?.points ?? 0;
+      student_id: number;
+      student_name: string;
+      question_id: number;
+      question_title: string;
+      exam_id: number;
+      exam_title: string;
+      language: string;
+      source_code: string;
+    }): Promise<Submission> => {
+      const newSubId = nextSubmissionId.current++;
+      const question = Object.values(questions)
+        .flat()
+        .find((item) => item.id === data.question_id);
+      const questionTestCases = testCases[data.question_id] || [];
+      const maxScore = question?.points ?? 0;
 
     const initialSub: Submission = {
       id: newSubId,
@@ -920,20 +920,20 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     }
 
       if (token) {
-        let backendSubmissionId: number | null = null;
-        try {
-          const subLanguage =
-            question.question_type === "MULTIPLE_CHOICE" ||
-            question.question_type === "SHORT_ANSWER"
-              ? "plaintext"
-              : question.language;
-          const realSubId = await submitCodeRequest(
-            data.question_id,
-            subLanguage,
-            data.source_code,
-            token
-          );
-          backendSubmissionId = realSubId;
+              let backendSubmissionId: number | null = null;
+              try {
+                const subLanguage =
+                  question.question_type === "MULTIPLE_CHOICE" ||
+                  question.question_type === "SHORT_ANSWER"
+                    ? "plaintext"
+                    : question.language;
+                const realSubId = await submitCodeRequest(
+                  data.question_id,
+                  subLanguage,
+                  data.source_code,
+                  token
+                );
+                backendSubmissionId = realSubId;
           const acceptedSub: Submission = {
             ...initialSub,
             id: realSubId,
@@ -1069,7 +1069,8 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
             "Grading Worker",
             `Submission #${failedSub.id}: ${failedSub.error_summary}`
           );
-          return failedSub;
+          // Re-throw so the caller (e.g. handleConfirmSubmit) knows this submission failed
+          throw error;
         }
       }
 
