@@ -6,7 +6,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   Circle,
-  ClipboardCheck,
   ListChecks,
   Send,
   X,
@@ -25,16 +24,9 @@ interface QuestionSidebarProps {
   actionHint?: string;
   actionDescription?: string;
   submittingLabel?: string;
-  hideActionGuidance?: boolean;
 }
 
 function isQuestionConfigured(question: Question, cases: TestCase[]): boolean {
-  if (question.question_type === "MULTIPLE_CHOICE") {
-    return Boolean(question.mc_options && question.mc_options.length >= 2);
-  }
-  if (question.question_type === "SHORT_ANSWER") {
-    return true;
-  }
   if (!cases.length) return false;
   return cases.every((testCase) =>
     question.question_type === "JAVA_CLASS_METHOD"
@@ -53,10 +45,9 @@ export function QuestionSidebar({
   onReviewSubmit,
   onClose,
   actionLabel = "Review & Submit Test",
-  actionHint = "Submission can be confirmed or cancelled",
-  actionDescription = "Review every question before submitting. Unanswered questions can still be submitted, but they will not earn points.",
+  actionHint = "",
+  actionDescription = "",
   submittingLabel = "Submitting...",
-  hideActionGuidance = false,
 }: QuestionSidebarProps) {
   const answeredSet = new Set(answeredIds);
   const answeredCount = questions.filter((question) => answeredSet.has(question.id)).length;
@@ -108,20 +99,18 @@ export function QuestionSidebar({
                 key={question.id}
                 type="button"
                 onClick={() => onSelect(index)}
-                className={`w-full text-left rounded-md border p-2.5 transition-all flex items-start gap-2.5 ${
-                  isActive
-                    ? "border-orange-400 bg-orange-50/80 shadow-xs"
-                    : "border-slate-200 bg-white hover:bg-slate-50"
-                }`}
+                className={`w-full text-left rounded-md border p-2.5 transition-all flex items-start gap-2.5 ${isActive
+                  ? "border-orange-400 bg-orange-50/80 shadow-xs"
+                  : "border-slate-200 bg-white hover:bg-slate-50"
+                  }`}
               >
                 <span
-                  className={`mt-0.5 shrink-0 flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-bold font-mono ${
-                    isAnswered
-                      ? "bg-emerald-600 border-emerald-600 text-white"
-                      : isActive
+                  className={`mt-0.5 shrink-0 flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-bold font-mono ${isAnswered
+                    ? "bg-emerald-600 border-emerald-600 text-white"
+                    : isActive
                       ? "bg-orange-500 border-orange-500 text-white"
                       : "bg-white border-slate-300 text-slate-500"
-                  }`}
+                    }`}
                 >
                   {isAnswered ? <CheckCircle2 className="w-3 h-3" /> : index + 1}
                 </span>
@@ -163,7 +152,7 @@ export function QuestionSidebar({
         </div>
 
         <div className="p-3 border-t border-slate-200 bg-slate-50 space-y-2">
-          {!hideActionGuidance && (
+          {actionDescription && (
             <div className="text-[10px] text-slate-400 font-mono leading-relaxed">
               {actionDescription}
             </div>
@@ -177,9 +166,8 @@ export function QuestionSidebar({
             <Send className="w-3.5 h-3.5" />
             {isSubmitting ? submittingLabel : actionLabel}
           </button>
-          {!hideActionGuidance && (
-            <div className="flex items-center justify-center gap-1.5 text-[10px] font-mono text-slate-400">
-              <ClipboardCheck className="w-3 h-3" />
+          {actionHint && (
+            <div className="text-center text-[10px] font-mono text-slate-400">
               {actionHint}
             </div>
           )}

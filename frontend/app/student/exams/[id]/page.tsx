@@ -221,17 +221,17 @@ export default function ExamWorkspacePage() {
     () =>
       questions
         .filter(
-            (question) => {
-              const answer = answers[question.id] || "";
-              if (question.question_type === "MULTIPLE_CHOICE" || question.question_type === "SHORT_ANSWER") {
-                return Boolean(interactedIds[question.id]) || hasMcAnswer(answer);
-              }
-              return Boolean(interactedIds[question.id]) || hasAnswer(answer);
+          (question) => {
+            const answer = answers[question.id] || "";
+            if (question.question_type === "MULTIPLE_CHOICE" || question.question_type === "SHORT_ANSWER") {
+              return Boolean(interactedIds[question.id]) || hasMcAnswer(answer);
             }
-          )
-          .map((question) => question.id),
-      [answers, questions, interactedIds]
-    );
+            return Boolean(interactedIds[question.id]) || hasAnswer(answer);
+          }
+        )
+        .map((question) => question.id),
+    [answers, questions, interactedIds]
+  );
 
   const answeredSet = useMemo(() => new Set(answeredIds), [answeredIds]);
   const isAnswered = (question: Question) => answeredSet.has(question.id);
@@ -408,15 +408,15 @@ export default function ExamWorkspacePage() {
   };
 
   const handleConfirmSubmit = async () => {
-      if (isTeacher) return;
-      if (!user || !exam) return;
-      setIsSubmittingExam(true);
-      setSubmitError("");
-      const toSubmit = questions;
+    if (isTeacher) return;
+    if (!user || !exam) return;
+    setIsSubmittingExam(true);
+    setSubmitError("");
+    const toSubmit = questions;
 
-      try {
-        for (const question of toSubmit) {
-          await submitCode({
+    try {
+      for (const question of toSubmit) {
+        await submitCode({
           student_id: user.id,
           student_name: user.full_name,
           question_id: question.id,
@@ -436,19 +436,18 @@ export default function ExamWorkspacePage() {
       addLog(
         "SUBMISSION",
         user.full_name,
-        `Confirmed final submission of test "${exam.title}" (${toSubmit.length} question${
-          toSubmit.length === 1 ? "" : "s"
+        `Confirmed final submission of test "${exam.title}" (${toSubmit.length} question${toSubmit.length === 1 ? "" : "s"
         } submitted for grading)`
       );
       setTimeout(() => {
         router.push(`/student/results/${exam.id}`);
       }, 2600);
     } catch (error) {
-          console.error(error);
-          setSubmitError("The test could not be submitted. Please try again.");
-        } finally {
-          setIsSubmittingExam(false);
-        }
+      console.error(error);
+      setSubmitError("The test could not be submitted. Please try again.");
+    } finally {
+      setIsSubmittingExam(false);
+    }
   };
 
   const handleSendBroadcast = (event: React.FormEvent) => {
@@ -537,9 +536,8 @@ export default function ExamWorkspacePage() {
                       (question) => !isAnswered(question)
                     ).length;
                     if (unanswered === 0) return " You will be redirected to your test result shortly.";
-                    return ` ${unanswered} unanswered question${
-                      unanswered === 1 ? "" : "s"
-                    } will be graded from the saved code and may receive 0 points. You will be redirected to your test result shortly.`;
+                    return ` ${unanswered} unanswered question${unanswered === 1 ? "" : "s"
+                      } will be graded from the saved code and may receive 0 points. You will be redirected to your test result shortly.`;
                   })()}
                 </p>
               </div>
@@ -647,11 +645,10 @@ export default function ExamWorkspacePage() {
             <button
               type="button"
               onClick={() => setSidebarOpen((open) => !open)}
-              className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 border transition-all ${
-                sidebarOpen
+              className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 border transition-all ${sidebarOpen
                   ? "bg-slate-900 text-white border-slate-900"
                   : "bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200"
-              }`}
+                }`}
               title={sidebarOpen ? "Hide question navigator" : "Show question navigator"}
             >
               {sidebarOpen ? (
@@ -714,11 +711,10 @@ export default function ExamWorkspacePage() {
               <button
                 type="button"
                 onClick={() => setVerificationOpen(true)}
-                className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 border transition-all ${
-                  examVerifications[exam.id]?.passed
+                className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 border transition-all ${examVerifications[exam.id]?.passed
                     ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
                     : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
-                }`}
+                  }`}
                 title="Check test data and grader configuration before opening the exam"
               >
                 <FlaskConical className="w-3.5 h-3.5" />
@@ -732,11 +728,10 @@ export default function ExamWorkspacePage() {
               <button
                 type="button"
                 onClick={() => setShowBroadcastWidget(!showBroadcastWidget)}
-                className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 border transition-all ${
-                  showBroadcastWidget
+                className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 border transition-all ${showBroadcastWidget
                     ? "bg-orange-500 text-white border-orange-500 shadow-xs"
                     : "bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100"
-                }`}
+                  }`}
               >
                 <Megaphone className="w-3.5 h-3.5" />
                 <span>Broadcast Tool</span>
@@ -746,11 +741,10 @@ export default function ExamWorkspacePage() {
 
           <div className="flex items-center gap-2 w-full md:w-auto justify-end flex-wrap">
             <div
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono font-bold border ${
-                timeLeft < 300
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono font-bold border ${timeLeft < 300
                   ? "bg-red-50 border-red-300 text-red-600 animate-pulse"
                   : "bg-slate-50 border-slate-200 text-slate-700"
-              }`}
+                }`}
             >
               <Clock className="w-3.5 h-3.5 text-slate-400" />
               <span>Time Left: {formatTime(timeLeft)}</span>
@@ -771,7 +765,7 @@ export default function ExamWorkspacePage() {
             <button
               type="button"
               onClick={isTeacher ? handleGradeExam : () => setReviewOpen(true)}
-                            disabled={isTeacher ? isGrading : isSubmittingExam}
+              disabled={isTeacher ? isGrading : isSubmittingExam}
               className="px-5 py-2 rounded bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white text-xs font-bold shadow-sm transition-all flex items-center gap-2 disabled:opacity-50"
             >
               {isTeacher ? (
@@ -993,65 +987,65 @@ export default function ExamWorkspacePage() {
                   )}
 
                   {isCodingQuestion && (
-                  <div className="space-y-2 pt-2 border-t border-slate-100">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono block">
-                      Sample Test Cases (Visible)
-                    </span>
-                    {questionTestCases.filter((testCase) => testCase.is_sample).length === 0 && (
-                      <p className="text-[11px] text-slate-400 italic">
-                        No sample test cases were provided for this question.
-                      </p>
-                    )}
-                    {questionTestCases
-                      .filter((testCase) => testCase.is_sample)
-                      .map((testCase, index) => (
-                        <div
-                          key={testCase.id}
-                          className="p-2.5 rounded bg-slate-50 border border-slate-200 text-xs font-mono space-y-1"
-                        >
-                          <div className="text-[10px] font-bold text-slate-500 flex justify-between">
-                            <span>Sample #{index + 1}</span>
-                            <span>{testCase.weight} Pts</span>
+                    <div className="space-y-2 pt-2 border-t border-slate-100">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono block">
+                        Sample Test Cases (Visible)
+                      </span>
+                      {questionTestCases.filter((testCase) => testCase.is_sample).length === 0 && (
+                        <p className="text-[11px] text-slate-400 italic">
+                          No sample test cases were provided for this question.
+                        </p>
+                      )}
+                      {questionTestCases
+                        .filter((testCase) => testCase.is_sample)
+                        .map((testCase, index) => (
+                          <div
+                            key={testCase.id}
+                            className="p-2.5 rounded bg-slate-50 border border-slate-200 text-xs font-mono space-y-1"
+                          >
+                            <div className="text-[10px] font-bold text-slate-500 flex justify-between">
+                              <span>Sample #{index + 1}</span>
+                              <span>{testCase.weight} Pts</span>
+                            </div>
+                            {testCase.stdin && (
+                              <div>
+                                <span className="text-[10px] text-slate-400 block">Input:</span>
+                                <pre className="p-1.5 bg-white border border-slate-200 rounded text-[11px]">
+                                  {testCase.stdin}
+                                </pre>
+                              </div>
+                            )}
+                            {testCase.expected_stdout && (
+                              <div>
+                                <span className="text-[10px] text-slate-400 block">
+                                  Expected Output:
+                                </span>
+                                <pre className="p-1.5 bg-white border border-slate-200 rounded text-[11px]">
+                                  {testCase.expected_stdout}
+                                </pre>
+                              </div>
+                            )}
+                            {testCase.arguments && (
+                              <div>
+                                <span className="text-[10px] text-slate-400 block">Args:</span>
+                                <pre className="p-1.5 bg-white border border-slate-200 rounded text-[11px]">
+                                  {testCase.arguments}
+                                </pre>
+                              </div>
+                            )}
+                            {testCase.expected_return && (
+                              <div>
+                                <span className="text-[10px] text-slate-400 block">
+                                  Expected Return:
+                                </span>
+                                <pre className="p-1.5 bg-white border border-slate-200 rounded text-[11px]">
+                                  {testCase.expected_return}
+                                </pre>
+                              </div>
+                            )}
                           </div>
-                          {testCase.stdin && (
-                            <div>
-                              <span className="text-[10px] text-slate-400 block">Input:</span>
-                              <pre className="p-1.5 bg-white border border-slate-200 rounded text-[11px]">
-                                {testCase.stdin}
-                              </pre>
-                            </div>
-                          )}
-                          {testCase.expected_stdout && (
-                            <div>
-                              <span className="text-[10px] text-slate-400 block">
-                                Expected Output:
-                              </span>
-                              <pre className="p-1.5 bg-white border border-slate-200 rounded text-[11px]">
-                                {testCase.expected_stdout}
-                              </pre>
-                            </div>
-                          )}
-                          {testCase.arguments && (
-                            <div>
-                              <span className="text-[10px] text-slate-400 block">Args:</span>
-                              <pre className="p-1.5 bg-white border border-slate-200 rounded text-[11px]">
-                                {testCase.arguments}
-                              </pre>
-                            </div>
-                          )}
-                          {testCase.expected_return && (
-                            <div>
-                              <span className="text-[10px] text-slate-400 block">
-                                Expected Return:
-                              </span>
-                              <pre className="p-1.5 bg-white border border-slate-200 rounded text-[11px]">
-                                {testCase.expected_return}
-                              </pre>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                  </div>
+                        ))}
+                    </div>
                   )}
                 </div>
               </div>
@@ -1085,11 +1079,10 @@ export default function ExamWorkspacePage() {
                           return (
                             <label
                               key={letter}
-                              className={`flex w-full cursor-pointer items-start gap-3 rounded border p-3 text-xs font-mono transition-all ${
-                                isSelected
+                              className={`flex w-full cursor-pointer items-start gap-3 rounded border p-3 text-xs font-mono transition-all ${isSelected
                                   ? "border-orange-500 bg-orange-50 shadow-xs"
                                   : "border-slate-200 bg-white hover:bg-slate-50"
-                              }`}
+                                }`}
                             >
                               <input
                                 type={isMulti ? "checkbox" : "radio"}
@@ -1151,72 +1144,72 @@ export default function ExamWorkspacePage() {
                   </div>
                 )}
 
-                              {/* Coding UI for STDIN_STDOUT and JAVA_CLASS_METHOD */}
-                              {currentQuestion.question_type !== "MULTIPLE_CHOICE" && currentQuestion.question_type !== "SHORT_ANSWER" && (
-                              <div className="bg-slate-900 rounded-lg border border-slate-800 shadow-md flex flex-col h-[420px] overflow-hidden">
-                                <div className="px-4 py-2 bg-slate-950 border-b border-slate-800 flex items-center justify-between text-xs text-slate-400">
-                                  <span className="font-mono text-slate-200 font-semibold flex items-center gap-1.5">
-                                    <Code2 className="w-3.5 h-3.5 text-orange-400" />
-                                    Solution.{currentQuestion.language === "java" ? "java" : "py"}
-                                    <span className="ml-1 rounded bg-slate-800 px-1.5 py-0.5 text-[9px] uppercase text-slate-400">
-                                      {languageLabel} selected by instructor
-                                    </span>
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={handleResetCode}
-                                    className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white transition-colors"
-                                    title="Reset to the teacher-provided starter code, or blank if none was provided"
-                                  >
-                                    <RotateCcw className="w-3 h-3" />
-                                    Reset
-                                  </button>
-                                </div>
-
-                                <div className="flex-1 relative">
-                                  <textarea
-                                    value={currentCode}
-                                    onChange={(event) => updateCode(event.target.value)}
-                                    onKeyDown={handleCodeKeyDown}
-                                    spellCheck={false}
-                                    className="w-full h-full p-4 bg-transparent text-slate-100 font-mono text-xs leading-relaxed focus:outline-none resize-none selection:bg-orange-500/30"
-                                    placeholder="// Enter your solution here..."
-                                  />
-                                </div>
-                              </div>
-                              )}
-
-                {isCodingQuestion && (
-                <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4 space-y-2">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono flex items-center gap-1.5">
-                      <Terminal className="w-3.5 h-3.5 text-slate-600" />
-                      Execution Console & Diagnostics
-                    </span>
-                    {consoleStatus === "success" && (
-                      <span className="text-[10px] font-bold text-emerald-600 font-mono uppercase">
-                        Sample Tests Passed
+                {/* Coding UI for STDIN_STDOUT and JAVA_CLASS_METHOD */}
+                {currentQuestion.question_type !== "MULTIPLE_CHOICE" && currentQuestion.question_type !== "SHORT_ANSWER" && (
+                  <div className="bg-slate-900 rounded-lg border border-slate-800 shadow-md flex flex-col h-[420px] overflow-hidden">
+                    <div className="px-4 py-2 bg-slate-950 border-b border-slate-800 flex items-center justify-between text-xs text-slate-400">
+                      <span className="font-mono text-slate-200 font-semibold flex items-center gap-1.5">
+                        <Code2 className="w-3.5 h-3.5 text-orange-400" />
+                        Solution.{currentQuestion.language === "java" ? "java" : "py"}
+                        <span className="ml-1 rounded bg-slate-800 px-1.5 py-0.5 text-[9px] uppercase text-slate-400">
+                          {languageLabel} selected by instructor
+                        </span>
                       </span>
-                    )}
-                    {consoleStatus === "error" && (
-                      <span className="text-[10px] font-bold text-red-600 font-mono uppercase">
-                        Check Sample Output
-                      </span>
-                    )}
+                      <button
+                        type="button"
+                        onClick={handleResetCode}
+                        className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white transition-colors"
+                        title="Reset to the teacher-provided starter code, or blank if none was provided"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        Reset
+                      </button>
+                    </div>
+
+                    <div className="flex-1 relative">
+                      <textarea
+                        value={currentCode}
+                        onChange={(event) => updateCode(event.target.value)}
+                        onKeyDown={handleCodeKeyDown}
+                        spellCheck={false}
+                        className="w-full h-full p-4 bg-transparent text-slate-100 font-mono text-xs leading-relaxed focus:outline-none resize-none selection:bg-orange-500/30"
+                        placeholder="// Enter your solution here..."
+                      />
+                    </div>
                   </div>
-
-                  <pre className="p-3 bg-slate-50 rounded border border-slate-200 font-mono text-[11px] text-slate-700 min-h-[70px] max-h-[160px] overflow-y-auto whitespace-pre-wrap">
-                    {consoleOutput || (
-                      <span className="text-slate-400 italic">
-                        Click &quot;Run Sample&quot; to test your saved answer against the visible
-                        sample cases. Only passing test cases receive points.
-                      </span>
-                    )}
-                  </pre>
-                </div>
                 )}
 
-                                {/* Previous / Next Question navigation */}
+                {isCodingQuestion && (
+                  <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4 space-y-2">
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono flex items-center gap-1.5">
+                        <Terminal className="w-3.5 h-3.5 text-slate-600" />
+                        Execution Console & Diagnostics
+                      </span>
+                      {consoleStatus === "success" && (
+                        <span className="text-[10px] font-bold text-emerald-600 font-mono uppercase">
+                          Sample Tests Passed
+                        </span>
+                      )}
+                      {consoleStatus === "error" && (
+                        <span className="text-[10px] font-bold text-red-600 font-mono uppercase">
+                          Check Sample Output
+                        </span>
+                      )}
+                    </div>
+
+                    <pre className="p-3 bg-slate-50 rounded border border-slate-200 font-mono text-[11px] text-slate-700 min-h-[70px] max-h-[160px] overflow-y-auto whitespace-pre-wrap">
+                      {consoleOutput || (
+                        <span className="text-slate-400 italic">
+                          Click &quot;Run Sample&quot; to test your saved answer against the visible
+                          sample cases. Only passing test cases receive points.
+                        </span>
+                      )}
+                    </pre>
+                  </div>
+                )}
+
+                {/* Previous / Next Question navigation */}
                 <div className="flex items-center justify-between gap-3 mt-2">
                   <button
                     type="button"
@@ -1244,7 +1237,7 @@ export default function ExamWorkspacePage() {
             </div>
           </div>
 
-                                          {sidebarOpen && (
+          {sidebarOpen && (
             <QuestionSidebar
               questions={questions}
               currentIndex={currentQIndex}
@@ -1258,7 +1251,7 @@ export default function ExamWorkspacePage() {
               onClose={() => setSidebarOpen(false)}
               actionLabel={isTeacher ? "Grade Exam" : undefined}
               submittingLabel={isTeacher ? "Grading..." : undefined}
-              hideActionGuidance={isTeacher}
+            //hideActionGuidance={isTeacher}
             />
           )}
         </div>
